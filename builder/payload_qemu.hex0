@@ -1,0 +1,21 @@
+97 04 00 00 ; auipc   s1,0x0
+93 84 24 02 ; add     s1,s1,34 # hello
+
+#:loop
+03 85 04 00 ; lb      a0,0(s1)
+09 C5       ; beqz    a0,0x16
+85 04       ; add     s1,s1,1
+EF 00 80 00 ; jal     0x18 # uart_putc
+D5 BF       ; j       0x8 # loop
+
+#:halt
+01 A0       ; j       0x16 # halt
+
+
+#:uart_putc
+B7 05 00 10 ; lui     a1,0x10000 # UART
+23 80 A5 00 ; sb      a0,0(a1) # 0x10000000
+82 80       ; ret
+
+#:hello
+48 65 6C 6C 6F 2C 20 57 6F 72 6C 64 21 00 # "Hello, World!"
