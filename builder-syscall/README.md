@@ -24,7 +24,7 @@ riscv64-unknown-elf-gcc -march=rv64gc -nostdlib -ffreestanding -Ttext=0x80000000
 ```
 3. Из .elf мы переделываем эти файлы в .bin
 ```
-riscv64-unknown-elf-objcopy -O binary simon.elf simon.bin
+riscv64-unknown-elf-objcopy -O binary boot.elf boot.bin
 ```
 5. Программу (в нашем случае simon.bin), которую будет собирать boot, переводим в .hex0 shell скриптом
 ```
