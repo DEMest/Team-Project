@@ -34,5 +34,5 @@ riscv64-unknown-elf-objcopy -O binary boot.elf boot.bin
 > В файле .hex0 можно добавлять комментарии, как это реализовано у зимней школы.
 4. Конкатенируем полученные два файла в образ
 ```
-cat boot.bin simon.hex0 > image_qemu.bi
+cat boot.bin simon.hex0 > image_qemu.bin
 ```
