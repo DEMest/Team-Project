@@ -1,5 +1,5 @@
 ## Источники
-За основу взят проект [зимней школы](https://github.com/ylab-nsu/ws25-bootstrap), откуда взяты скрипты shell для сборки программы на hex0, а так же код boot.S, запускающий весь образ.
+За основу взят проект [зимней школы](https://github.com/ylab-nsu/ws25-bootstrap), откуда взяты скрипты shell для сборки программы на hex0, а также код boot.S, запускающий весь образ.
 Для ориентировании в коде рекомендую использовать [RISC-V Assembler Cheat Sheet](https://projectf.io/posts/riscv-cheat-sheet/).
 
 ## Запуск
