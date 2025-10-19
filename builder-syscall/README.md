@@ -21,10 +21,12 @@ image_qemu.bin = (bin^hex0)
 1. Оба файла собираются в .elf
 ```
 riscv64-unknown-elf-gcc -march=rv64gc -nostdlib -ffreestanding -Ttext=0x80000000 src/boot.S -o boot.elf
+riscv64-unknown-elf-gcc -march=rv64gc -nostdlib -ffreestanding -Ttext=0x80000000 src/simon.S -o simon.elf
 ```
 3. Из .elf мы переделываем эти файлы в .bin
 ```
 riscv64-unknown-elf-objcopy -O binary boot.elf boot.bin
+riscv64-unknown-elf-objcopy -O binary simon.elf simon.bin
 ```
 5. Программу (в нашем случае simon.bin), которую будет собирать boot, переводим в .hex0 shell скриптом
 ```
