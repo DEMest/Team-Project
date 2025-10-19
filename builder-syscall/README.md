@@ -28,6 +28,9 @@ riscv64-unknown-elf-gcc -march=rv64gc -nostdlib -ffreestanding -Ttext=0x80000000
 riscv64-unknown-elf-objcopy -O binary boot.elf boot.bin
 riscv64-unknown-elf-objcopy -O binary simon.elf simon.bin
 ```
+> [!NOTE]
+> На федоре происходит что-то странное с выравниваниями, для переделывания из .elf в .bin нужно использовать
+> riscv64-unknown-elf-objcopy -O binary -R .data -R .sdata -R .riscv.attributes boot.elf boot.bin
 5. Программу (в нашем случае simon.bin), которую будет собирать boot, переводим в .hex0 shell скриптом
 ```
 ./bin-to-hex0.sh simon.bin simon.hex0
