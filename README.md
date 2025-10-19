@@ -2,19 +2,22 @@
 
 - Цели и план проекта лежат в папке 'presentation/'
 
+- [SRS - Требования к системе](docs/SRS_bootstrap(ENG).md)
+- [Project Schedule](docs/Project-Schedule.md)
+- [Vision](docs/Vision(ENG).md)
 
 - Исходные файлы лежат в папке builder/
 
-## Предметная часть
-- [x] Сделать презентацию - Данил
-- [ ] Написать SRS - Данил
-- [ ] Переписать vision - Данил
-- [ ] Написать Project Schedule - Данил
+## Documentation Package (Responsible: Даниил)
+- [x] Project presentation
+- [x] Software Requirements Specification (SRS)  
+- [x] Project Schedule 
+- [x] Vision Document 
 
 ## Проектная часть
-- [x] Написать первую программу на RISC-V для qemu - Юра
-- [ ] Запустить stage1 на LicheePi - Витя
-- [x] Написать системный вызов для виртуальной машины - Юра
-- [ ] Написать системный вызов для LicheePi - 
+- [x] Develop the first RISC-V program for QEMU - Юра
+- [ ] Run stage1 on LicheePi 4A - Витя
+- [x] Implement a system call for the virtual machine (QEMU) - Юра
+- [ ] Implement a system call for LicheePi - (TBD)
 
 |> TODO написать задачи связанные с созданием stage2
