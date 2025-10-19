@@ -3,7 +3,7 @@
 Для ориентировании в коде рекомендую использовать [RISC-V Assembler Cheat Sheet](https://projectf.io/posts/riscv-cheat-sheet/).
 
 ## Запуск
-Для тестирования образа достаточно взять готовый файл image_qemu.bin и запустить у себя командой
+Для тестирования образа достаточно взять готовый файл image_qemu.binи запустить у себя командой
 ```
 qemu-system-riscv64 -M virt -bios image_qemu.bin
 ```  
@@ -41,3 +41,52 @@ riscv64-unknown-elf-objcopy -O binary simon.elf simon.bin
 ```
 cat boot.bin simon.hex0 > image_qemu.bin
 ```
+
+## Сборка с помощью Makefile
+Для сборки на стандартных настройках (входные - boot.S, hello.S, выходной файл - image_qemu.bin)
+```
+make
+```
+Можно использовать флаги:
+Для изменения boot файла
+```
+BOOT_SRC=src/boot.S
+```
+
+Для изменения основной нагрузки
+```
+PAYLOAD_SRC=src/simon.S
+```
+
+Для изменения выходного файла
+```
+UTPUT_IMAGE=simon.bin
+```
+
+Запуск в QEMU
+```
+make run
+```
+
+Сборка и запуск одной командой
+```
+make build-and-run
+```
+
+Просмотр информации
+```
+make info
+```
+
+Просмотр размера итогового образа
+```
+make size
+```
+
+Полная очистка (включая итоговый образ)
+```
+make clean
+```
+
+
+
