@@ -16,7 +16,7 @@
 
 ## Проектная часть
 - [x] Develop the first RISC-V program for QEMU - Юра
-- [ ] Run stage1 on LicheePi 4A - Витя
+- [x] Run stage1 on LicheePi 4A - Витя
 - [x] Implement a system call for the virtual machine (QEMU) - Юра
 - [ ] Implement a system call for LicheePi - (TBD)
 
