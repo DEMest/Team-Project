@@ -51,19 +51,42 @@ The system builds a trusted chain of tools and artifacts, allowing to:
 
 ## 4. Use Cases
 
-### UC-01: Quick local build and run in QEMU
-**Actor:** developer  
-**Goal:** obtain an image and verify that early stages initialize.  
-**Main flow:**
-1. Run `make qemu`.  
-2. The system builds the stages and produces ELF/BIN.  
-3. QEMU starts; boot logs are visible in the console.  
-**Acceptance criteria:** the command completes without errors.
+### UC-01: Fast Local Build and Run in QEMU
 
-### UC-02: Build reproducibility check
-**Actor:** instructor/CI  
-**Goal:** two consecutive builds produce identical artifact hashes.  
-**Acceptance criteria:** **SHA256** of all key artifacts match.
+**Actor:** Developer  
+**Goal:** Obtain an image and ensure early stages are properly initialized.
+
+**Preconditions:**  
+- Dependencies are installed (make, RISC-V compiler, QEMU)
+- Project sources are available locally
+
+**Main Flow:**
+1. Run `make qemu` in the project root directory.
+2. The system sequentially builds all stages (stage1 → stage2), links and produces ELF/BIN artifacts.
+3. QEMU is automatically started in 'virt' machine mode with UART console; boot messages appear in the terminal.
+4. The console displays signal/status lines of initial system startup (e.g., Stage1 OK, ENTER MAIN) for quick verification.
+5. The process completes without errors, and the developer can confirm that minimal boot has succeeded.
+
+**Acceptance Criteria:**  
+- The command completes without errors  
+- QEMU starts successfully  
+- A message confirming successful boot appears
+
+---
+
+### UC-02: Build Reproducibility Check
+
+**Actor:** Instructor/CI  
+**Goal:** Two consecutive builds produce identical artifact hashes
+
+**Main Flow:**
+1. Run `make clean`, then `make all`, and save SHA256 checksums of all key artifacts.
+2. Run `make clean` again, repeat `make all`, and save SHA256 checksums.
+3. Compare and ensure that hashes match for every artifact.
+4. Record the result: "reproducible" if there are no differences; otherwise, "not reproducible" with a list of differing files.
+
+**Acceptance Criteria:**  
+- SHA256 hashes of all key artifacts are identical between two independent builds
 
 ---
 
