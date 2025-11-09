@@ -1,51 +1,38 @@
-#define UART0_BASE 0x10000000
-#define UART_LSR   0x05
-#define LSR_RX_READY 0x01
-#define BUFFER_SIZE 0x10
-
-# СПИСОК ПРОЦЕССОВ ==================
-#define PS_LIST_ADDR 0x81000000
-
-#define PS_MAX_PID 32
-#define PS_STRUCT_SIZE 32
-
-#define PS_STATE_OFFSET 0 
-#define PS_NAME_OFFSET 1
-
-#define PS_STATE_ZOMBIE 1
-#define PS_STATE_RUNNING 2
-#define PS_STATE_SLEEPING 3
-# ===================================
+#define UART0_BASE      0x10000000
+#define UART_LSR        5
+#define LSR_RX_READY    1
+#define BUFFER_SIZE     32
 
 .global _start
 .section .text
 
+/*  (!!!) По поводу регистров
 
-# Справка по регистрам
-#   a0-a1 - аргументные регистры (передача данных между функциями)
-#   t0-t2 - временные регистры (для данных внутри функции)
-#   s1-s3 - сохранённые (постоянные) регистры
+    A function using a preserved register must restore its original value before returning.
+    A function using a non-preserved register must assume it’s changed by a function call.
+
+    Saved registers (s*, preserved) - регистры для глобального хранения
+    значений. Если по какой-то причине вам понадобился занятый регистр s,
+    то сохраните его содержимое в стек и затем верните.
+
+    Temporary registers (t*, non-preserved) - регистры для использования
+    ВНУТРИ функций. 
+
+    Function arguments (a*, non-preserved) - мы кладём последовательно 
+    аргументы в регистры a0-a7 и возвращаем нужное значение в a0.
 
 
-# Стартовая точка, мы тут один раз
+    ra - регистр, хранящий адрес возврата (по которому ret возвращается)
+    sp - буквально stack pointer, тут всё понятно
+*/
+
+
+# Стартовая точка, мы тут один раз, можно запихать какой-нибудь init 
 _start:
-    la a0, kernel
-    li a1, PS_STATE_RUNNING
-    call add_process
-
-    la a0, shtd_cmd
-    li a1, PS_STATE_ZOMBIE
-    call add_process
-
     la a0, greetings
     call puts
 
-
-
-# Глобально сохраняем адрес на буфер и индекс буфера
 main_loop:
-    la a0, sym_newline
-    call puts
     la a0, cmd_prefix
     call puts
 
@@ -57,6 +44,7 @@ input_loop:
     call getc # Ждём символ
     call putc # Эхо-вывод
     # !!! по хорошему бы как-то отдельно обрабатывать кнопку backspace, иначе начинается стендап с вводом
+    # Upd 09.11.25: закидываю issue, иначе мы так и не исправим эту проблему 
     
     # Сохраняем символ в буфер
     sb a0, 0(s1)
@@ -64,7 +52,7 @@ input_loop:
     addi s2, s2, 1
     
     # Проверка на конец строки
-    li t0, '\r' # Символ возврата каретки
+    li t0, '\r' # я не знаю как можно ввести символ возврата каретки, но на всякий случай запихаю сюда
     beq a0, t0, process_input
     li t0, '\n'
     beq a0, t0, process_input
@@ -91,6 +79,7 @@ process_input:
     
 remove_last:
     sb zero, 0(s3)
+    li s3, 0
     
 # =====================================================
 
@@ -100,20 +89,40 @@ output:
     call puts
     
     # Проверки на команды -----------------------------
+    # shutdown
     la a0, buffer
-    la a1, shtd_cmd
+    la a1, shutdown_cmd
     call strcmp
     beqz a0, shutdown
 
-    la a0, buffer
-    la a1, ps_cmd
+    # reboot
+    la a0, buffer 
+    la a1, reboot_cmd
     call strcmp
-    beqz a0, process_list
+    beqz a0, reboot
+
+    # lsusb
+    la a0, buffer 
+    la a1, lsusb_cmd
+    call strcmp
+    beqz a0, lsusb
+
+    #debug - для проперки отдельных элементов кода, в нашем случае kernel panic
+    la a0, buffer
+    la a1, debug_cmd
+    call strcmp
+
+    mv t0, a0
+    la a0, msg_kernel_panic_0
+
+    beqz t0, kernel_panic
     # -------------------------------------------------
     
     la a0, echo_cmd
     call puts
     la a0, buffer
+    call puts
+    la a0, sym_newline
     call puts
     
     j main_loop
@@ -124,102 +133,68 @@ output:
 
 # ================= РЕАЛИЗАЦИЯ КОМАНД =================
 # Команда shutdown
-# Трюк с имитацией отключения питания
-#   Если честно я сам не совсем понял магию чисел ниже
-#   Логика такова, что питания нет -> железо не работает -> нечего эмулировать -> QEMU закрывается
+# 0x100000 - адрес для исполнения магических команд в зависимости от значения
 shutdown:    
     li t0, 0x100000
-    li t1, 0x5555
+    li t1, 0x5555 # shutdown
     sw t1, 0(t0)
     
     # если трюк не сработал - уходим в бесконечный цикл и наслаждаемся своей беспомощностью
     j shutdown
 
-/* поломано   
-process_list:
-    # Заголовок
-    la a0, ps_header
-    call puts
-    la a0, sym_newline
-    call puts
+# Команда reboot
+reboot:
+    li t0, 0x100000 
+    li t1, 0x7777 # reboot
+    sw t1, 0(t0)
+    
+    # если не сработало, пытаемся просто выключить
+    j shutdown 
 
-    # Инициализация
-    li t0, 0                # PID = 0
-    li t1, PS_LIST_ADDR     # Базовый адрес списка
-    li t6, PS_MAX_PID       # Максимум процессов
-
-process_list_loop:
-    bge t0, t6, process_list_done  # Если дошли до конца — выход
-
-    # Вычисляем адрес структуры процесса
-    li t2, PS_STRUCT_SIZE
-    mul t3, t0, t2          # t3 = PID * размер структуры
-    add t4, t1, t3          # t4 = адрес текущей структуры
-
-    # Загружаем состояние
-    lb t5, PS_STATE_OFFSET(t4)
-    beqz t5, process_list_next   # Если 0 — слот пуст
-
-    # Определяем строку состояния
-    li t2, PS_STATE_RUNNING
-    beq t5, t2, .print_running
-    li t2, PS_STATE_SLEEPING
-    beq t5, t2, .print_sleeping
-    li t2, PS_STATE_ZOMBIE
-    beq t5, t2, .print_zombie
-    j process_list_next  
-
-.print_running:
-    la a0, state_running_str
-    j .print_state
-
-.print_sleeping:
-    la a0, state_sleeping_str
-    j .print_state
-
-.print_zombie:
-    la a0, state_zombie_str
-    j .print_state
-
-.print_state:
-    call puts
-
-    # Разделитель " | "
-    la a0, ps_separator
-    call puts
-
-    # Имя процесса
-    addi a0, t4, PS_NAME_OFFSET
-    call puts
-
-    # Перевод строки
-    la a0, sym_newline
-    call puts
-
-process_list_next:
-    addi t0, t0, 1
-    j process_list_loop
-
-process_list_done:
-    j main_loop
-*/
+# Команда lsusb
+lsusb:
+    
 # =====================================================
 
+
+
+# ====================== УТИЛИТЫ ======================
+# Kernel panic
+# a0 - адрес на вид ошибки
+kernel_panic:
+    mv t0, a0 
+    la a0, msg_kernel_panic
+    call puts
+    mv a0, t0
+    call puts 
+    la a0, sym_newline
+    call puts
+
+    la a0, rec_kernel_panic_0
+    call puts
+
+    la a0, rec_kernel_panic_1
+    call puts
+kernel_panic_loop: 
+    call getc 
+
+    li t0, 'r'
+    beq a0, t0, reboot
+    li t0, 's'
+    beq a0, t0, shutdown
+
+    j kernel_panic_loop
+
 # Сравнение строк
-# 
-# Передаваемые аргументы:
-# a0 - адрес на первую строку
-# a1 - адрес на вторую строку
-# 
-# Возвращает a0 = 0 если строки равны
+# a0 - строка из буфера
+# a1 - строка, объявленная в коде
 strcmp:
 strcmp_loop:
     lb t0, 0(a0)
     lb t1, 0(a1)
     
-    bne t0, t1, strcmp_not_equal
-    add t2, t0, t1 
-    beqz t2, strcmp_equal
+    beqz t1, strcmp_equal
+    bne t0, t1, strcmp_not_equal 
     
     # Увеличиваем индексы строк
     addi a0, a0, 1
@@ -233,50 +208,6 @@ strcmp_equal:
 strcmp_not_equal:
     li a0, 1
     ret
-
-# Добавление процесса
-#
-# Передаваемые аргументы:
-# a0 - адрес на название процесса
-# a1 - состояние 
-#
-# Кладёт новый объявленный процесс в список
-add_process:
-    li t0, 0                    # PID
-    li t1, PS_LIST_ADDR         # Адрес
-
-add_process_search_loop:
-    li t2, PS_STRUCT_SIZE
-    mul t2, t2, t0              # PID * размер_структуры
-    add t2, t2, t1              # Текущий адрес структуры
-
-    lb t3, 0(t2)                # Загружаем состояние
-    beqz t3, add_process_found_slot  # Если 0 - нашли слот
-
-    addi t0, t0, 1
-    j add_process_search_loop
-
-add_process_found_slot:
-    sb a1, 0(t2)                # Сохраняем состояние
-    addi t2, t2, PS_NAME_OFFSET # Переходим к полю имени
-    mv t3, a0                   # Источник - имя процесса
-    li t4, 31                   # Максимум 31 байт для имени
-
-add_process_copy_loop:
-    beqz t4, add_process_done   # Если скопировали 31 байт - выходим
-    lb t5, 0(t3)                # Загружаем байт из имени
-    beqz t5, add_process_done   # Если нуль-терминатор - выходим
-    sb t5, 0(t2)                # Сохраняем байт в структуру
-
-    addi t2, t2, 1
-    addi t3, t3, 1
-    addi t4, t4, -1
-    j add_process_copy_loop
-
-add_process_done:
-    ret
-
-
 
 # Вывод одного символа, кладём байт в UART
 putc:
@@ -306,30 +237,37 @@ puts_loop:
     j puts_loop
 puts_done:
     ret
+# =====================================================
 
 
 
 # Вспомогательные строки
-debug: .string "debug\r\n"
-sym_newline: .string "\r\n"
-sym_space: .string " "
-greetings: .string "Coded by Team 42."
-cmd_prefix: .string "Simon says~: "
-kernel: .string "simon"
+buffer:                 .space  32
+echo_cmd:               .string "echo answered " # <- сделал не в совсем привычном виде, к командам не отношу
 
-# Команды ===================
-shtd_cmd: .string "shutdown"
-ps_cmd: .string "ps"
-# ===========================
+sym_newline:            .string "\r\n"
+sym_space:              .string " "
 
-# Вспомогательное ===========
-ps_header: .string "State | Name"
-ps_separator: .string " | "
-state_running_str: .string "Running"
-state_sleeping_str: .string "Sleeping" 
-state_zombie_str: .string "Zombie"
-state_unknown: .string "Unknown"
-# ===========================
+# =================== Команды ===================
+debug_cmd:              .string "debug"
+shutdown_cmd:           .string "shutdown"
+reboot_cmd:             .string "reboot"
+lsusb_cmd:              .string "lsusb"
+# ===============================================
 
-echo_cmd: .string "echo answered " # <- сделал не в совсем привычном виде, к командам не отношу
-buffer: .space 32
+# =============== Вспомогательное ===============
+greetings:              .string "[BOOTED]: Kernel coded by Team 42.\r\n"
+cmd_prefix:             .string "Simon says~: "
+
+# ===============================================
+
+# ================= Для ошибок ==================
+msg_kernel_panic:       .string "[KERNEL PANIC]: "
+
+# err messages
+msg_kernel_panic_0:     .string "Debug"
+
+# recommendation message
+rec_kernel_panic_0:     .string "Please, press r to reboot\r\n"
+rec_kernel_panic_1:     .string "...or press s to shutdown.\r\n"
+# ===============================================
