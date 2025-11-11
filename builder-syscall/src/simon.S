@@ -33,8 +33,6 @@ _start:
     call puts
 
 main_loop:
-    la a0, sym_newline
-    call puts
     la a0, cmd_prefix
     call puts
 
@@ -93,10 +91,21 @@ output:
     # Проверки на команды -----------------------------
     # shutdown
     la a0, buffer
-    la a1, shutd_cmd
+    la a1, shutdown_cmd
     call strcmp
     beqz a0, shutdown
 
+    # reboot
+    la a0, buffer 
+    la a1, reboot_cmd
+    call strcmp
+    beqz a0, reboot
+
+    # lsusb
+    la a0, buffer 
+    la a1, lsusb_cmd
+    call strcmp
+    beqz a0, lsusb
 
     #debug - для проперки отдельных элементов кода, в нашем случае kernel panic
     la a0, buffer
@@ -113,6 +122,8 @@ output:
     call puts
     la a0, buffer
     call puts
+    la a0, sym_newline
+    call puts
     
     j main_loop
 
@@ -122,16 +133,27 @@ output:
 
 # ================= РЕАЛИЗАЦИЯ КОМАНД =================
 # Команда shutdown
-# Трюк с имитацией отключения питания
-#   Если честно я сам не совсем понял магию чисел ниже
-#   Логика такова, что питания нет -> железо не работает -> нечего эмулировать -> QEMU закрывается
+# 0x100000 - адрес для исполнения магических команд в зависимости от значения
 shutdown:    
     li t0, 0x100000
-    li t1, 0x5555
+    li t1, 0x5555 # shutdown
     sw t1, 0(t0)
     
     # если трюк не сработал - уходим в бесконечный цикл и наслаждаемся своей беспомощностью
     j shutdown
+
+# Команда reboot
+reboot:
+    li t0, 0x100000 
+    li t1, 0x7777 # reboot
+    sw t1, 0(t0)
+    
+    # если не сработало, пытаемся просто выключить
+    j shutdown 
+
+# Команда lsusb
+lsusb:
+    
 # =====================================================
 
 
@@ -145,14 +167,19 @@ kernel_panic:
     call puts
     mv a0, t0
     call puts 
-
     la a0, sym_newline
     call puts
-    la a0, rec_kernel_panic
+
+    la a0, rec_kernel_panic_0
+    call puts
+
+    la a0, rec_kernel_panic_1
     call puts
 kernel_panic_loop: 
     call getc 
 
+    li t0, 'r'
+    beq a0, t0, reboot
     li t0, 's'
     beq a0, t0, shutdown
 
@@ -223,12 +250,15 @@ sym_space:              .string " "
 
 # =================== Команды ===================
 debug_cmd:              .string "debug"
-shutd_cmd:              .string "shutdown"
+shutdown_cmd:           .string "shutdown"
+reboot_cmd:             .string "reboot"
+lsusb_cmd:              .string "lsusb"
 # ===============================================
 
 # =============== Вспомогательное ===============
-greetings:              .string "Coded by Team 42."
+greetings:              .string "[BOOTED]: Kernel coded by Team 42.\r\n"
 cmd_prefix:             .string "Simon says~: "
+
 # ===============================================
 
 # ================= Для ошибок ==================
@@ -238,5 +268,6 @@ msg_kernel_panic:       .string "[KERNEL PANIC]: "
 msg_kernel_panic_0:     .string "Debug"
 
 # recommendation message
-rec_kernel_panic:       .string "Please, press s to shutdown."
+rec_kernel_panic_0:     .string "Please, press r to reboot\r\n"
+rec_kernel_panic_1:     .string "...or press s to shutdown.\r\n"
 # ===============================================
