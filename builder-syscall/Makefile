@@ -8,7 +8,7 @@ CFLAGS = -march=rv64gc -nostdlib -ffreestanding -Os
 
 # Настраиваемые имена файлов (можно переопределить при вызове make)
 BOOT_SRC ?= src/boot.S
-PAYLOAD_SRC ?= src/hello.S
+PAYLOAD_SRC ?= src/simon.S
 OUTPUT_IMAGE ?= image_qemu.bin
 
 # Автоматически генерируем имена промежуточных файлов на основе входных

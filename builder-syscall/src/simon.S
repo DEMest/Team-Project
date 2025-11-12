@@ -41,25 +41,66 @@ main_loop:
     
 # ====================== ВВОД =========================
 input_loop:
-    call getc # Ждём символ
-    call putc # Эхо-вывод
-    # !!! по хорошему бы как-то отдельно обрабатывать кнопку backspace, иначе начинается стендап с вводом
-    # Upd 09.11.25: закидываю issue, иначе мы так и не исправим эту проблему 
-    
-    # Сохраняем символ в буфер
+    call getc
+
+    # Стрелка вверх (блокировка)
+    li t0, 27
+    beq a0, t0, handle_escape
+
+    li t0, 127    # backspace
+    beq a0, t0, do_backspace
+
+    li t0, '\n'
+    beq a0, t0, process_input
+    li t0, '\r'
+    beq a0, t0, process_input
+
+    li t0, BUFFER_SIZE
+    bge s2, t0, input_loop
+
+    # Echo-вывод символа
+    call putc
+
     sb a0, 0(s1)
     addi s1, s1, 1
     addi s2, s2, 1
-    
-    # Проверка на конец строки
-    li t0, '\r' # я не знаю как можно ввести символ возврата каретки, но на всякий случай запихаю сюда
-    beq a0, t0, process_input
-    li t0, '\n'
-    beq a0, t0, process_input
-    
-    # Проверка на переполнение буфера
-    li t0, BUFFER_SIZE
-    blt s2, t0, input_loop
+
+    j input_loop
+
+handle_escape:
+    call getc
+    li t1, '['
+    bne a0, t1, input_loop
+
+    call getc
+    li t1, 'A'
+    beq a0, t1, esc_up
+
+    j input_loop
+
+esc_up:
+    j input_loop
+
+do_backspace:
+    beqz s2, input_loop          # Если буфер пуст — не стираем
+    addi s1, s1, -1              # Смещаем указатель назад
+    addi s2, s2, -1              # Длина уменьшается
+
+    # Визуальное стирание символа на терминале (BS, пробел, BS)
+    li a0, 8                     # backspace
+    call putc
+    li a0, 32                    # space
+    call putc
+    li a0, 8                     # backspace
+    call putc
+
+    j input_loop
+
+end_input:
+    sb zero, 0(s1)               # Окончание строки (\0)
+    la a0, sym_newline           # Печать новой строки
+    call puts
+    j process_input
     
 process_input:
     sb zero, 0(s1)
