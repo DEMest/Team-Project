@@ -49,28 +49,51 @@ main_loop:
 input_loop:
     call getc
 
-    li t0, 8    # backspace
+    # Стрелка вверх (блокировка)
+    li t0, 27
+    beq a0, t0, handle_escape
+
+    li t0, 127    # backspace
     beq a0, t0, do_backspace
     li t0, '\n'
+
     beq a0, t0, process_input
     li t0, '\r'
+    
     beq a0, t0, process_input
 
+    li t0, BUFFER_SIZE
+    bge s2, t0, input_loop
+
+    # Echo-вывод символа
     call putc
 
+    # Запись в буфер по адресу
     sb a0, 0(s1)
     addi s1, s1, 1
     addi s2, s2, 1
 
-    # Проверка на переполнение
-    li t0, BUFFER_SIZE
-    blt s2, t0, input_loop
+    j input_loop
 
-    # Если переполнение — кернел паник просто потому что 
-    la a0, sym_newline
-    call puts
-    la a0, msg_kernel_panic_1
-    call kernel_panic
+handle_escape:
+    call getc
+    li t1, '['
+    bne a0, t1, input_loop
+
+    call getc
+    li t1, 'A'
+    beq a0, t1, esc_up
+    # li t1, 'B'
+    # beq a0, t1, esc_down
+    # li t1, 'C'
+    # beq a0, t1, esc_right
+    # li t1, 'D'
+    # beq a0, t1, esc_left
+
+    j input_loop
+
+esc_up:
+    j input_loop
 
 do_backspace:
     beqz s2, input_loop          # Если буфер пуст — не стираем
