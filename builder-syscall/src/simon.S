@@ -7,6 +7,10 @@
 #define SHUTDOWN_SIG    0x5555
 #define REBOOT_SIG      0x7777
 
+#define FREE_RAM        0x81000000
+#define FREE_RAM_END    0x87ffffff
+#define PAGE_SIZE       4096        # 4096 bytes
+
 .global _start
 .section .text
 
@@ -28,13 +32,20 @@
 
     ra - регистр, хранящий адрес возврата (по которому ret возвращается)
     sp - буквально stack pointer, тут всё понятно
+
+    0x81000000 - 0x87ffffff: для страниц
 */
 
 
 # Стартовая точка, мы тут один раз, можно запихать какой-нибудь init 
 _start:
+    li s3, FREE_RAM
+
     la a0, greetings
     call puts
+
+    call alloc_page
+    call alloc_page
 
 main_loop:
     la a0, sym_newline
@@ -349,6 +360,34 @@ memcpy_done:
     ret 
 
 
+alloc_page:
+    addi sp, sp, -8
+    sd ra, 0(sp)
+
+    la a0, msg_kernel_panic_2
+    li t0, FREE_RAM_END
+    li t2, PAGE_SIZE
+
+    add t1, s3, t2
+    bge t1, t0, kernel_panic
+
+    mv a0, s3
+    li a1, 0
+    mv a2, t2
+    call memset
+
+    la a0, allocated_page_addr
+    call puts
+    mv a0, s3
+    call puth
+
+    li t2, PAGE_SIZE
+    add s3, s3, t2
+
+    ld ra, 0(sp)
+    addi sp, sp, 8
+    ret 
+
 # get char
 putc:
     li t0, UART0_BASE
@@ -383,10 +422,10 @@ puts_done:
 
 # put hex
 puth:
-    addi sp, sp, -12
+    addi sp, sp, -24
     sd s0, 0(sp)
-    sd s1, 4(sp)
-    sd ra, 8(sp)
+    sd s1, 8(sp)
+    sd ra, 16(sp)
     
     mv s0, a0
     li s1, 16
@@ -412,10 +451,10 @@ puth_output:
     bnez s1, puth_loop
     
 puth_done:
-    ld ra, 8(sp)
-    ld s1, 4(sp)
+    ld ra, 16(sp)
+    ld s1, 8(sp)
     ld s0, 0(sp)
-    addi sp, sp, 12
+    addi sp, sp, 24
     ret
 # ===============================================
 
@@ -439,6 +478,7 @@ reboot_cmd:             .string "reboot"
 greetings:              .string "[BOOTED]: Kernel coded by Team 42."
 cmd_prefix:             .string "Simon says~: "
 
+allocated_page_addr:    .string "\r\npage allocated: "
 # ===============================================
 
 # ================= Для ошибок ==================
@@ -447,6 +487,7 @@ msg_kernel_panic:       .string "[KERNEL PANIC]: "
 # err messages
 msg_kernel_panic_0:     .string "Debug\r\n"
 msg_kernel_panic_1:     .string "Buffer overflowed\r\n"
+msg_kernel_panic_2:     .string "Out of memory\r\n"
 
 # recommendation message
 rec_kernel_panic_0:     .string "Please, press r to reboot\r\n"
