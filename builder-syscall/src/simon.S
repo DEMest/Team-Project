@@ -1,15 +1,28 @@
-#define UART0_BASE      0x10000000
-#define UART_LSR        5
-#define LSR_RX_READY    1
-#define BUFFER_SIZE     32
+#define UART0_BASE              0x10000000
+#define UART_LSR                5
+#define LSR_RX_READY            1
+#define BUFFER_SIZE             32
 
-#define MAGIC_ADDRESS   0x100000
-#define SHUTDOWN_SIG    0x5555
-#define REBOOT_SIG      0x7777
+#define MAGIC_ADDRESS           0x100000
+#define SHUTDOWN_SIG            0x5555
+#define REBOOT_SIG              0x7777
 
-#define FREE_RAM        0x81000000
-#define FREE_RAM_END    0x87ffffff
-#define PAGE_SIZE       4096        # 4096 bytes
+#define FREE_RAM_POINTER_SIZE   8
+#define FREE_RAM_START          0x81000000
+#define FREE_RAM_END            0x87ffffff
+#define PAGE_SIZE               8192 
+
+#define PROC_MAX                8
+#define PROC_PAGES              3
+
+#define PROC_STATE_UNUSED       0x0000
+#define PROC_STATE_RUNNING      0xffffffffffffffff # сюда можно запихать любое значение отличное от нуля, развлекайтесь
+
+#define PROC_SHIFT_PID          0
+#define PROC_SHIFT_STATE        8
+#define PROC_SHIFT_SP_ADDR      16
+
+#define PROC_STACK_SIZE         0x4000          
 
 .global _start
 .section .text
@@ -39,13 +52,37 @@
 
 # Стартовая точка, мы тут один раз, можно запихать какой-нибудь init 
 _start:
-    li s3, FREE_RAM
-
     la a0, greetings
     call puts
+    
+    la t0, free_ram_pointer
+    li t1, FREE_RAM_START
+    sd t1, 0(t0)
 
+    li t0, 0
+    li t1, PROC_MAX
+init_loop:
+    bge t0, t1, init_loop_done
+
+    addi sp, sp, -16
+    sd t0, 0(sp)
+    sd t1, 8(sp)
+
+    # по три страницы на процесс (мне лень сюда вставлять ещё один цикл)
     call alloc_page
     call alloc_page
+    call alloc_page
+
+    ld t0, 0(sp)
+    ld t1, 8(sp)
+    addi sp, sp, 16
+
+    addi t0, t0, 1
+    j init_loop
+init_loop_done:
+    la s4, test_a
+    la s7, test_b
+    
 
 main_loop:
     la a0, sym_newline
@@ -189,9 +226,42 @@ reboot:
     j shutdown 
 
 debug:
-    li a0, 0x3456789abcdef0
-    call puth
-    j main_loop
+    la a0, test_a
+    call create_process
+
+    la a0, test_b
+    call create_process
+
+    li t0, 0x81000000
+    ld sp, PROC_SHIFT_SP_ADDR(t0)
+
+    call test_a
+
+test_a:
+    la a0, debug_a
+    call puts 
+test_a_loop:
+    li a0, 'A'
+    call putc
+
+    li a0, 0x81000000
+    li a1, 0x81006000
+    call switch_context
+
+    j test_a_loop
+
+test_b:
+    la a0, debug_b
+    call puts 
+test_b_loop:
+    li a0, 'B'
+    call putc
+
+    li a0, 0x81006000
+    li a1, 0x81000000
+    call switch_context
+
+    j test_b_loop
 # =====================================================
 
 
@@ -368,25 +438,171 @@ alloc_page:
     li t0, FREE_RAM_END
     li t2, PAGE_SIZE
 
-    add t1, s3, t2
+    la t3, free_ram_pointer
+    ld t4, 0(t3)
+
+    add t1, t4, t2
     bge t1, t0, kernel_panic
 
-    mv a0, s3
+    mv a0, t4
     li a1, 0
     mv a2, t2
     call memset
 
     la a0, allocated_page_addr
     call puts
-    mv a0, s3
+    mv a0, t4
     call puth
 
     li t2, PAGE_SIZE
-    add s3, s3, t2
+    add t4, t4, t2
 
+    sd t4, 0(t3)
     ld ra, 0(sp)
     addi sp, sp, 8
     ret 
+
+/*
+    Переключение между окружениями(?).
+    Для процессов.
+
+    Аргументы:
+    a0 - предыдущий stack pointer
+    a1 - следующий stack pointer
+
+    Вывод:
+    - 
+*/
+switch_context:
+    addi sp, sp, -160 # ага...
+    sd ra, 0(sp)
+    sd s0, 8(sp)
+    sd s1, 16(sp)
+    sd s2, 24(sp)
+    sd s3, 32(sp)
+    sd s4, 40(sp)
+    sd s5, 48(sp)
+    sd s6, 56(sp)
+    sd s7, 64(sp)
+    sd s8, 72(sp)
+    sd s9, 80(sp)
+    sd s10, 88(sp)
+    sd s11, 96(sp)
+    # я не знаю как сильно нам пригодится сохранение t*, но пусть будет
+    sd t0, 104(sp)
+    sd t1, 112(sp)
+    sd t2, 120(sp)
+    sd t3, 128(sp)
+    sd t4, 136(sp)
+    sd t5, 144(sp)
+    sd t6, 152(sp)
+
+    sd sp, PROC_SHIFT_SP_ADDR(a0)
+    ld sp, PROC_SHIFT_SP_ADDR(a1)
+
+    ld ra, 0(sp)
+    ld s0, 8(sp)
+    ld s1, 16(sp)
+    ld s2, 24(sp)
+    ld s3, 32(sp)
+    ld s4, 40(sp)
+    ld s5, 48(sp)
+    ld s6, 56(sp)
+    ld s7, 64(sp)
+    ld s8, 72(sp)
+    ld s9, 80(sp)
+    ld s10, 88(sp)
+    ld s11, 96(sp)
+    ld t0, 104(sp)
+    ld t1, 112(sp)
+    ld t2, 120(sp)
+    ld t3, 128(sp)
+    ld t4, 136(sp)
+    ld t5, 144(sp)
+    ld t6, 152(sp)
+    addi sp, sp, 160
+    ret
+
+/*
+    Создание процесса.
+
+    Аргументы:
+    a0 - program counter 
+
+    Вывод:
+    -
+*/
+create_process:
+    li t0, PAGE_SIZE
+    li t1, PROC_PAGES
+    mul t0, t0, t1
+
+    li t1, PROC_MAX
+    li t2, 0
+
+    # t0 - память на процесс (3 страницы)
+    # t1 - макс. количество процессов
+    # t2 - индекс процесса
+create_process_loop:
+    bge t2, t1, create_process_no_slot
+
+    li t3, FREE_RAM_START
+    mul t4, t2, t0
+    add t3, t3, t4
+
+    ld t4, PROC_SHIFT_STATE(t3)
+    beqz t4, create_process_slot_found
+
+    addi t2, t2, 1
+    j create_process_loop
+create_process_no_slot:
+    la a0, msg_kernel_panic_3
+    call kernel_panic
+create_process_slot_found:
+    # t0 - размер памяти
+    # t1 - индекс
+    # t2 - адрес на память процесса
+    # t3 - sp процесса  
+    mv t1, t2
+
+    li t2, FREE_RAM_START
+    mul t3, t0, t1
+    add t2, t2, t3
+    
+    add t3, t2, t0
+    addi t3, t3, -1
+
+    addi t3, t3, -160 # ага х2...
+    sd a0,   0(t3)      # ra = pc 
+    sd zero, 8(t3)      # s0
+    sd zero, 16(t3)     # s1
+    sd zero, 24(t3)     # s2
+    sd zero, 32(t3)     # s3
+    sd zero, 40(t3)     # s4
+    sd zero, 48(t3)     # s5
+    sd zero, 56(t3)     # s6
+    sd zero, 64(t3)     # s7
+    sd zero, 72(t3)     # s8
+    sd zero, 80(t3)     # s9
+    sd zero, 88(t3)     # s10
+    sd zero, 96(t3)     # s11
+    sd zero, 104(t3)    # t0
+    sd zero, 112(t3)    # t1
+    sd zero, 120(t3)    # t2
+    sd zero, 128(t3)    # t3
+    sd zero, 136(t3)    # t4
+    sd zero, 144(t3)    # t5
+    sd zero, 152(t3)    # t6
+
+    sd t3, PROC_SHIFT_SP_ADDR(t2)   # sp
+    
+    addi t3, t1, 1
+    sd t3, PROC_SHIFT_PID(t2)       # pid = i + 1
+
+    li t3, PROC_STATE_RUNNING
+    sd t3, PROC_SHIFT_STATE(t2)     # state = running
+
+    ret
 
 # get char
 putc:
@@ -438,7 +654,7 @@ puth_loop:
 
     li t0, 10
     blt a0, t0, puth_digit
-    addi a0, a0, 55
+    addi a0, a0, 87 # сделал буквы маленькими, чтобы в глазах не рябило
     j puth_output
 puth_digit:
     addi a0, a0, 48
@@ -458,10 +674,8 @@ puth_done:
     ret
 # ===============================================
 
-
-
-# Вспомогательные строки
 buffer:                 .space  BUFFER_SIZE
+free_ram_pointer:       .space  FREE_RAM_POINTER_SIZE
 echo_cmd:               .string "echo answered " # <- сделал не в совсем привычном виде, к командам не отношу
 
 sym_newline:            .string "\r\n"
@@ -477,6 +691,8 @@ reboot_cmd:             .string "reboot"
 # =============== Вспомогательное ===============
 greetings:              .string "[BOOTED]: Kernel coded by Team 42."
 cmd_prefix:             .string "Simon says~: "
+debug_a:                 .string "starting A\r\n"
+debug_b:                 .string "starting B\r\n"
 
 allocated_page_addr:    .string "\r\npage allocated: "
 # ===============================================
@@ -488,6 +704,7 @@ msg_kernel_panic:       .string "[KERNEL PANIC]: "
 msg_kernel_panic_0:     .string "Debug\r\n"
 msg_kernel_panic_1:     .string "Buffer overflowed\r\n"
 msg_kernel_panic_2:     .string "Out of memory\r\n"
+msg_kernel_panic_3:     .string "No free process slots\r\n"
 
 # recommendation message
 rec_kernel_panic_0:     .string "Please, press r to reboot\r\n"
