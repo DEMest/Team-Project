@@ -14,15 +14,13 @@
 
 #define PROC_MAX                8
 #define PROC_PAGES              3
-
 #define PROC_STATE_UNUSED       0x0000
-#define PROC_STATE_RUNNING      0xffffffffffffffff # сюда можно запихать любое значение отличное от нуля, развлекайтесь
-
+#define PROC_STATE_RUNNING      0xffff
 #define PROC_SHIFT_PID          0
 #define PROC_SHIFT_STATE        8
 #define PROC_SHIFT_SP_ADDR      16
-
-#define PROC_STACK_SIZE         0x4000          
+#define PROC_STACK_SIZE         0x4000
+#define PROC_MEMORY_START       0x81000000
 
 .global _start
 .section .text
@@ -80,8 +78,6 @@ init_loop:
     addi t0, t0, 1
     j init_loop
 init_loop_done:
-    la s4, test_a
-    la s7, test_b
     
 
 main_loop:
@@ -235,6 +231,9 @@ debug:
     li t0, 0x81000000
     ld sp, PROC_SHIFT_SP_ADDR(t0)
 
+    la t1, current_proc
+    sd t0, 0(t1)
+
     call test_a
 
 test_a:
@@ -244,10 +243,7 @@ test_a_loop:
     li a0, 'A'
     call putc
 
-    li a0, 0x81000000
-    li a1, 0x81006000
-    call switch_context
-
+    call yield
     j test_a_loop
 
 test_b:
@@ -257,10 +253,7 @@ test_b_loop:
     li a0, 'B'
     call putc
 
-    li a0, 0x81006000
-    li a1, 0x81000000
-    call switch_context
-
+    call yield
     j test_b_loop
 # =====================================================
 
@@ -474,7 +467,7 @@ alloc_page:
     - 
 */
 switch_context:
-    addi sp, sp, -160 # ага...
+    addi sp, sp, -104 # ага...
     sd ra, 0(sp)
     sd s0, 8(sp)
     sd s1, 16(sp)
@@ -488,17 +481,12 @@ switch_context:
     sd s9, 80(sp)
     sd s10, 88(sp)
     sd s11, 96(sp)
-    # я не знаю как сильно нам пригодится сохранение t*, но пусть будет
-    sd t0, 104(sp)
-    sd t1, 112(sp)
-    sd t2, 120(sp)
-    sd t3, 128(sp)
-    sd t4, 136(sp)
-    sd t5, 144(sp)
-    sd t6, 152(sp)
 
     sd sp, PROC_SHIFT_SP_ADDR(a0)
     ld sp, PROC_SHIFT_SP_ADDR(a1)
+
+    la t0, current_proc
+    sd a1, 0(t0)
 
     ld ra, 0(sp)
     ld s0, 8(sp)
@@ -513,14 +501,7 @@ switch_context:
     ld s9, 80(sp)
     ld s10, 88(sp)
     ld s11, 96(sp)
-    ld t0, 104(sp)
-    ld t1, 112(sp)
-    ld t2, 120(sp)
-    ld t3, 128(sp)
-    ld t4, 136(sp)
-    ld t5, 144(sp)
-    ld t6, 152(sp)
-    addi sp, sp, 160
+    addi sp, sp, 104
     ret
 
 /*
@@ -572,7 +553,7 @@ create_process_slot_found:
     add t3, t2, t0
     addi t3, t3, -1
 
-    addi t3, t3, -160 # ага х2...
+    addi t3, t3, -104 # ага х2...
     sd a0,   0(t3)      # ra = pc 
     sd zero, 8(t3)      # s0
     sd zero, 16(t3)     # s1
@@ -586,13 +567,6 @@ create_process_slot_found:
     sd zero, 80(t3)     # s9
     sd zero, 88(t3)     # s10
     sd zero, 96(t3)     # s11
-    sd zero, 104(t3)    # t0
-    sd zero, 112(t3)    # t1
-    sd zero, 120(t3)    # t2
-    sd zero, 128(t3)    # t3
-    sd zero, 136(t3)    # t4
-    sd zero, 144(t3)    # t5
-    sd zero, 152(t3)    # t6
 
     sd t3, PROC_SHIFT_SP_ADDR(t2)   # sp
     
@@ -603,15 +577,58 @@ create_process_slot_found:
     sd t3, PROC_SHIFT_STATE(t2)     # state = running
 
     ret
+    
+yield:
+    la t0, current_proc
+    ld t1, 0(t0)
+    mv t0, t1
 
-# get char
+    li t1, PAGE_SIZE
+    li t2, PROC_PAGES
+    mul t1, t1, t2
+    li t2, PROC_MAX
+    mul t1, t1, t2
+
+    li t2, PROC_MAX
+    li t3, 0
+
+    mv t4, t0
+yield_loop:
+    beq t2, t3, yield_end
+
+    li t5, PROC_MEMORY_START
+    sub t4, t4, t5
+    li t5, PROC_PAGES
+    li t6, PAGE_SIZE
+    mul t5, t5, t6
+    add t4, t4, t5
+    rem t4, t4, t1 
+    li t5, PROC_MEMORY_START
+    add t4, t4, t5
+
+    ld t5, PROC_SHIFT_STATE(t4)
+    li t6, PROC_STATE_RUNNING
+    beq t5, t6, yield_end
+
+    addi t3, t3, 1
+    j yield_loop
+yield_end:
+    la t5, idle_proc
+    ld t6, 0(t5)
+    la a0, msg_kernel_panic_4
+    beq t6, t4, kernel_panic
+
+    mv a0, t0
+    mv a1, t4
+
+    j switch_context
+
 putc:
     li t0, UART0_BASE
     sb a0, 0(t0)
     ret
 
 
-# put char
 getc:
     li t0, UART0_BASE
 1:
@@ -676,6 +693,8 @@ puth_done:
 
 buffer:                 .space  BUFFER_SIZE
 free_ram_pointer:       .space  FREE_RAM_POINTER_SIZE
+current_proc:           .space  8
+idle_proc:              .space  8
 echo_cmd:               .string "echo answered " # <- сделал не в совсем привычном виде, к командам не отношу
 
 sym_newline:            .string "\r\n"
@@ -705,6 +724,7 @@ msg_kernel_panic_0:     .string "Debug\r\n"
 msg_kernel_panic_1:     .string "Buffer overflowed\r\n"
 msg_kernel_panic_2:     .string "Out of memory\r\n"
 msg_kernel_panic_3:     .string "No free process slots\r\n"
+msg_kernel_panic_4:     .string "Where are all the processes?\r\n"
 
 # recommendation message
 rec_kernel_panic_0:     .string "Please, press r to reboot\r\n"
