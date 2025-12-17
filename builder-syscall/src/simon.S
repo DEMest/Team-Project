@@ -1,7 +1,7 @@
 #define UART0_BASE              0x10000000
 #define UART_LSR                5
 #define LSR_RX_READY            1
-#define BUFFER_SIZE             32
+#define BUFFER_SIZE             128
 
 #define MAGIC_ADDRESS           0x100000
 #define SHUTDOWN_SIG            0x5555
@@ -14,15 +14,14 @@
 
 #define PROC_MAX                8
 #define PROC_PAGES              3
-
 #define PROC_STATE_UNUSED       0x0000
-#define PROC_STATE_RUNNING      0xffffffffffffffff # сюда можно запихать любое значение отличное от нуля, развлекайтесь
-
+#define PROC_STATE_RUNNING      0xffff
 #define PROC_SHIFT_PID          0
 #define PROC_SHIFT_STATE        8
 #define PROC_SHIFT_SP_ADDR      16
-
-#define PROC_STACK_SIZE         0x4000          
+#define PROC_SHIFT_NAME         24
+#define PROC_STACK_SIZE         0x4000
+#define PROC_MEMORY_START       0x81000000
 
 .global _start
 .section .text
@@ -42,11 +41,8 @@
     Function arguments (a*, non-preserved) - мы кладём последовательно 
     аргументы в регистры a0-a7 и возвращаем нужное значение в a0.
 
-
     ra - регистр, хранящий адрес возврата (по которому ret возвращается)
     sp - буквально stack pointer, тут всё понятно
-
-    0x81000000 - 0x87ffffff: для страниц
 */
 
 
@@ -54,122 +50,90 @@
 _start:
     la a0, greetings
     call puts
-    
+
+    la t0, buffer_index
+    li t1, 0
+    sb t1, 0(t0)
+
+    la t0, buffer_ready
+    li t1, 0
+    sb t1, 0(t0)
+
     la t0, free_ram_pointer
     li t1, FREE_RAM_START
     sd t1, 0(t0)
 
     li t0, 0
     li t1, PROC_MAX
+
 init_loop:
     bge t0, t1, init_loop_done
 
-    addi sp, sp, -16
+    addi sp, sp, -32
     sd t0, 0(sp)
     sd t1, 8(sp)
 
-    # по три страницы на процесс (мне лень сюда вставлять ещё один цикл)
+    li t2, 0
+    li t3, PROC_PAGES
+
+init_alloc:
+    sd t2, 16(sp)
+    sd t3, 24(sp)
+
     call alloc_page
-    call alloc_page
-    call alloc_page
+
+    ld t2, 16(sp)
+    ld t3, 24(sp)
+
+    addi t2, t2, 1
+    blt t2, t3, init_alloc
 
     ld t0, 0(sp)
     ld t1, 8(sp)
-    addi sp, sp, 16
+    addi sp, sp, 32
 
     addi t0, t0, 1
     j init_loop
 init_loop_done:
-    la s4, test_a
-    la s7, test_b
-    
+    la t0, idle_proc
+    la a0, _start
+    la a1, ps_name_idle
+    call create_process
 
-main_loop:
+    la a0, sish
+    la a1, ps_name_sish
+    call create_process
+
+    li t0, PROC_MEMORY_START
+    la t1, current_proc
+    sd t0, 0(t1)
+    la t1, idle_proc
+    sd t0, 0(t1)
+
+    call yield
+
+    la a0, msg_kernel_panic_4
+    call kernel_panic
+
+    
+# =============== SiSH - Simon SHELL ==================
+sish:
     la a0, sym_newline
     call puts
     la a0, cmd_prefix
-    call puts
-
-    la s1, buffer
-    li s2, 0
-    
-# ====================== ВВОД =========================
+    call puts 
 input_loop:
-    call getc
+    la t0, buffer_ready
+    lb t1, 0(t0)
+    bnez t1, output
 
-    # Стрелка вверх (блокировка)
-    li t0, 27
-    beq a0, t0, handle_escape
-
-    li t0, 127    # backspace
-    beq a0, t0, do_backspace
-    li t0, '\n'
-
-    beq a0, t0, process_input
-    li t0, '\r'
-    
-    beq a0, t0, process_input
-
-    li t0, BUFFER_SIZE
-    bge s2, t0, input_loop
-
-    # Echo-вывод символа
-    call putc
-
-    # Запись в буфер по адресу
-    sb a0, 0(s1)
-    addi s1, s1, 1
-    addi s2, s2, 1
-
+    call yield
     j input_loop
-
-handle_escape:
-    call getc
-    li t1, '['
-    bne a0, t1, input_loop
-
-    call getc
-    li t1, 'A'
-    beq a0, t1, esc_up
-    # li t1, 'B'
-    # beq a0, t1, esc_down
-    # li t1, 'C'
-    # beq a0, t1, esc_right
-    # li t1, 'D'
-    # beq a0, t1, esc_left
-
-    j input_loop
-
-esc_up:
-    j input_loop
-
-do_backspace:
-    beqz s2, input_loop          # Если буфер пуст — не стираем
-    addi s1, s1, -1              # Смещаем указатель назад
-    addi s2, s2, -1              # Длина уменьшается
-
-    li a0, 8                     # backspace
-    call putc
-    li a0, 32                    # space
-    call putc
-    li a0, 8                     # backspace
-    call putc
-
-    j input_loop
-    
-process_input:
-    sb zero, 0(s1)
-
-    j output
-    
-# =====================================================
-
-# ====================== ВЫВОД ========================
 output:
     la a0, sym_newline
     call puts
-    
-    # Проверки на команды -----------------------------
+
+# Проверки на команды -----------------------------
     # shutdown
     la a0, buffer
     la a1, shutdown_cmd
@@ -182,24 +146,36 @@ output:
     call cmdcmp
     beqz a0, reboot
 
-    # debug - для проверки отдельных элементов кода, в нашем случае kernel panic
+    la a0, buffer
+    la a1, ps_cmd
+    call cmdcmp
+    beqz a0, ps
+
+    # debug - для проверки отдельных элементов кода
     la a0, buffer
     la a1, debug_cmd
     call cmdcmp
-    beqz a0, debug
-    # -------------------------------------------------
-    
+    beqz a0, start_proc_debug
+# -------------------------------------------------
     la a0, echo_cmd
     call puts
     la a0, buffer
     call puts
-
+cmd_ended:
     la a0, buffer
     li a1, 0
     li a2, BUFFER_SIZE
     call memset
 
-    j main_loop
+    la t0, buffer_index
+    li t1, 0
+    sb t1, 0(t0)
+
+    la t0, buffer_ready
+    li t1, 0
+    sb t1, 0(t0)
+
+    j sish
 
 # =====================================================
 
@@ -226,47 +202,103 @@ reboot:
     j shutdown 
 
 debug:
-    la a0, test_a
-    call create_process
-
-    la a0, test_b
-    call create_process
-
-    li t0, 0x81000000
-    ld sp, PROC_SHIFT_SP_ADDR(t0)
-
-    call test_a
-
-test_a:
     la a0, debug_a
-    call puts 
-test_a_loop:
-    li a0, 'A'
-    call putc
+    call puts
+debug_loop:
+    call yield
+    j debug_loop
 
-    li a0, 0x81000000
-    li a1, 0x81006000
-    call switch_context
+ps:
+    la a0, sym_newline
+    call puts
 
-    j test_a_loop
+    la a0, ps_header
+    call puts
 
-test_b:
-    la a0, debug_b
-    call puts 
-test_b_loop:
-    li a0, 'B'
-    call putc
+    la a0, sym_newline
+    call puts
 
-    li a0, 0x81006000
-    li a1, 0x81000000
-    call switch_context
+    li t0, PROC_MEMORY_START
+    li t1, PROC_PAGES
+    li t2, PAGE_SIZE
+    mul t1, t1, t2
 
-    j test_b_loop
+    li t2, PROC_MAX
+    li t3, 0
+ps_loop:
+    mul t4, t1, t3
+    add t4, t0, t4
+
+    addi sp, sp, -32
+    sd t0, 0(sp)
+    sd t1, 8(sp)
+    sd t2, 16(sp)
+    sd t3, 24(sp)
+
+    mv a0, t4
+    call puth
+
+    la a0, ps_spliter
+    call puts
+
+    ld a0, PROC_SHIFT_STATE(t4)
+    li t5, PROC_STATE_RUNNING
+    bne a0, t5, process_not_exist
+process_exist:
+    ld a0, PROC_SHIFT_PID(t4)
+    call puth
+
+    la a0, ps_spliter
+    call puts
+
+    la a0, ps_running_state
+    call puts
+
+    la a0, ps_spliter
+    call puts
+
+    ld a0, PROC_SHIFT_NAME(t4)
+    call puts
+
+    j ps_loop_ending
+process_not_exist:
+    la a0, ps_no_process
+    call puts
+
+    la a0, ps_spliter
+    call puts
+
+    la a0, ps_unused_state
+    call puts
+
+    la a0, ps_spliter
+    call puts
+ps_loop_ending:
+    la a0, sym_newline
+    call puts
+
+    ld t0, 0(sp)
+    ld t1, 8(sp)
+    ld t2, 16(sp)
+    ld t3, 24(sp)
+    addi sp, sp, 32
+
+    addi t3, t3, 1
+    blt t3, t2, ps_loop
+
+    j cmd_ended
 # =====================================================
 
 
 
 # ====================== УТИЛИТЫ ======================
+start_proc:
+start_proc_debug:
+    la a0, debug
+    la a1, ps_name_debug
+    call create_process
+    call yield
+    j cmd_ended
 # Kernel panic
 # a0 - адрес на вид ошибки
 kernel_panic:
@@ -449,10 +481,10 @@ alloc_page:
     mv a2, t2
     call memset
 
-    la a0, allocated_page_addr
-    call puts
-    mv a0, t4
-    call puth
+    # la a0, allocated_page_addr
+    # call puts
+    # mv a0, t4
+    # call puth
 
     li t2, PAGE_SIZE
     add t4, t4, t2
@@ -474,7 +506,7 @@ alloc_page:
     - 
 */
 switch_context:
-    addi sp, sp, -160 # ага...
+    addi sp, sp, -104 # ага...
     sd ra, 0(sp)
     sd s0, 8(sp)
     sd s1, 16(sp)
@@ -488,17 +520,12 @@ switch_context:
     sd s9, 80(sp)
     sd s10, 88(sp)
     sd s11, 96(sp)
-    # я не знаю как сильно нам пригодится сохранение t*, но пусть будет
-    sd t0, 104(sp)
-    sd t1, 112(sp)
-    sd t2, 120(sp)
-    sd t3, 128(sp)
-    sd t4, 136(sp)
-    sd t5, 144(sp)
-    sd t6, 152(sp)
 
     sd sp, PROC_SHIFT_SP_ADDR(a0)
     ld sp, PROC_SHIFT_SP_ADDR(a1)
+
+    la t0, current_proc
+    sd a1, 0(t0)
 
     ld ra, 0(sp)
     ld s0, 8(sp)
@@ -513,14 +540,7 @@ switch_context:
     ld s9, 80(sp)
     ld s10, 88(sp)
     ld s11, 96(sp)
-    ld t0, 104(sp)
-    ld t1, 112(sp)
-    ld t2, 120(sp)
-    ld t3, 128(sp)
-    ld t4, 136(sp)
-    ld t5, 144(sp)
-    ld t6, 152(sp)
-    addi sp, sp, 160
+    addi sp, sp, 104
     ret
 
 /*
@@ -528,6 +548,7 @@ switch_context:
 
     Аргументы:
     a0 - program counter 
+    a1 - имя процесса
 
     Вывод:
     -
@@ -572,7 +593,7 @@ create_process_slot_found:
     add t3, t2, t0
     addi t3, t3, -1
 
-    addi t3, t3, -160 # ага х2...
+    addi t3, t3, -104 # ага х2...
     sd a0,   0(t3)      # ra = pc 
     sd zero, 8(t3)      # s0
     sd zero, 16(t3)     # s1
@@ -586,32 +607,113 @@ create_process_slot_found:
     sd zero, 80(t3)     # s9
     sd zero, 88(t3)     # s10
     sd zero, 96(t3)     # s11
-    sd zero, 104(t3)    # t0
-    sd zero, 112(t3)    # t1
-    sd zero, 120(t3)    # t2
-    sd zero, 128(t3)    # t3
-    sd zero, 136(t3)    # t4
-    sd zero, 144(t3)    # t5
-    sd zero, 152(t3)    # t6
 
     sd t3, PROC_SHIFT_SP_ADDR(t2)   # sp
-    
-    addi t3, t1, 1
-    sd t3, PROC_SHIFT_PID(t2)       # pid = i + 1
+    sd t1, PROC_SHIFT_PID(t2)       # pid = i
 
     li t3, PROC_STATE_RUNNING
     sd t3, PROC_SHIFT_STATE(t2)     # state = running
 
+    sd a1, PROC_SHIFT_NAME(t2)
     ret
-
-# get char
-putc:
+    
+yield:
+    # часть с вводом
     li t0, UART0_BASE
-    sb a0, 0(t0)
-    ret
+    lb t1, UART_LSR(t0)
+    andi t1, t1, LSR_RX_READY
+    beqz t1, yield_processes
+
+    lb a0, 0(t0) # getc
+
+    li t2, '\n'
+    beq a0, t2, yield_prepare_input
+
+    li t2, '\r'
+    beq a0, t2, yield_prepare_input
+
+    la t2, buffer_index
+    lb t3, 0(t2)
+    la t2, buffer
+    add t2, t2, t3
+
+    # кладём символ в буффер
+    sb a0, 0(t2)
+    addi t3, t3, 1
+    la t2, buffer_index
+    sb t3, 0(t2)
+
+    sb a0, 0(t0) # putc (echo)
+
+    j yield_processes
+yield_prepare_input:
+    la t2, buffer_index
+    lb t3, 0(t2)
+    la t2, buffer
+    add t2, t2, t3
+
+    sb zero, 0(t2)
+    addi t3, t3, 1
+    la t2, buffer_index
+    sb t3, 0(t2)
+
+    li t2, 1
+    la t3, buffer_ready
+    sb t2, 0(t3)
+
+    j yield_processes    
+yield_processes:
+    # часть с процессами
+    la t0, idle_proc
+    ld a1, 0(t0) 
+
+    la t0, current_proc
+    ld t1, 0(t0)
+    mv t0, t1
+
+    mv a0, t0
+
+    li t1, PAGE_SIZE
+    li t2, PROC_PAGES
+    mul t1, t1, t2
+    li t2, PROC_MAX
+    mul t1, t1, t2
+
+    li t2, PROC_MAX
+    li t3, 0
+
+    mv t4, t0
+yield_loop:
+    beq t2, t3, yield_end
+
+    li t5, PROC_MEMORY_START
+    sub t4, t4, t5
+    li t5, PROC_PAGES
+    li t6, PAGE_SIZE
+    mul t5, t5, t6
+    add t4, t4, t5
+    rem t4, t4, t1 
+    li t5, PROC_MEMORY_START
+    add t4, t4, t5
+
+    ld t5, PROC_SHIFT_STATE(t4)
+    li t6, PROC_STATE_RUNNING
+    beq t5, t6, yield_check_1
+
+    addi t3, t3, 1
+    j yield_loop
+yield_check_1:
+    ld t5, PROC_SHIFT_PID(t4)
+    bnez t5, yield_check_2
+
+    addi t3, t3, 1
+    j yield_loop
+yield_check_2:
+    mv a1, t4
+yield_end:
+    j switch_context
 
 
-# put char
 getc:
     li t0, UART0_BASE
 1:
@@ -619,6 +721,12 @@ getc:
     andi t1, t1, LSR_RX_READY
     beqz t1, 1b
     lb a0, 0(t0)
+    ret
+
+
+putc:
+    li t0, UART0_BASE
+    sb a0, 0(t0)
     ret
 
 
@@ -675,7 +783,11 @@ puth_done:
 # ===============================================
 
 buffer:                 .space  BUFFER_SIZE
+buffer_index:           .space  1
+buffer_ready:           .space  1
 free_ram_pointer:       .space  FREE_RAM_POINTER_SIZE
+current_proc:           .space  8
+idle_proc:              .space  8
 echo_cmd:               .string "echo answered " # <- сделал не в совсем привычном виде, к командам не отношу
 
 sym_newline:            .string "\r\n"
@@ -685,14 +797,28 @@ sym_hexnum:             .string "0x"
 # =================== Команды ===================
 debug_cmd:              .string "debug"
 shutdown_cmd:           .string "shutdown"
+ps_cmd:                 .string "ps"
 reboot_cmd:             .string "reboot"
+# ===============================================
+
+# ================== Процессы ===================
+ps_header:              .string "  MEMORY POINTER   |         PID        |  STATE  | NAME"
+ps_unused_state:        .string "UNUSED "
+ps_running_state:       .string "RUNNING"
+ps_no_process:          .string "        --        " 
+ps_spliter:             .string " | "
+
+
+ps_name_undefined:      .string "undefined"
+ps_name_idle:           .string "<init>"
+ps_name_sish:           .string "SiSH" 
+ps_name_debug:          .string "debug cmd"
 # ===============================================
 
 # =============== Вспомогательное ===============
 greetings:              .string "[BOOTED]: Kernel coded by Team 42."
 cmd_prefix:             .string "Simon says~: "
-debug_a:                 .string "starting A\r\n"
-debug_b:                 .string "starting B\r\n"
+debug_a:                .string "hello world"
 
 allocated_page_addr:    .string "\r\npage allocated: "
 # ===============================================
@@ -705,6 +831,7 @@ msg_kernel_panic_0:     .string "Debug\r\n"
 msg_kernel_panic_1:     .string "Buffer overflowed\r\n"
 msg_kernel_panic_2:     .string "Out of memory\r\n"
 msg_kernel_panic_3:     .string "No free process slots\r\n"
+msg_kernel_panic_4:     .string "Where are all the processes?\r\n"
 
 # recommendation message
 rec_kernel_panic_0:     .string "Please, press r to reboot\r\n"
