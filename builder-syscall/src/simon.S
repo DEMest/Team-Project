@@ -151,6 +151,12 @@ output:
     call cmdcmp
     beqz a0, ps
 
+    # clear
+    la a0, buffer
+    la a1, clear_cmd
+    call cmdcmp
+    beqz a0, clear
+
     # debug - для проверки отдельных элементов кода
     la a0, buffer
     la a1, debug_cmd
@@ -200,6 +206,32 @@ reboot:
     
     # если не сработало, пытаемся просто выключить
     j shutdown 
+
+clear:
+    la a0, cursor_home_seq
+    call puts
+
+    la a0, scroll_up_seq
+    call puts
+
+    la a0, cursor_home_seq
+    call puts
+
+    # сброс буфера ввода
+    la a0, buffer
+    li a1, 0
+    li a2, BUFFER_SIZE
+    call memset
+
+    la t0, buffer_index
+    li t1, 0
+    sb t1, 0(t0)
+
+    la t0, buffer_ready
+    li t1, 0
+    sb t1, 0(t0)
+
+    j sish
 
 debug:
     la a0, debug_a
@@ -626,26 +658,82 @@ yield:
 
     lb a0, 0(t0) # getc
 
+    # ---------- BACKSPACE ----------
+    li t2, 8            # '\b'
+    beq a0, t2, handle_backspace
+    li t2, 127          # DEL
+    beq a0, t2, handle_backspace
+
+    # ---------- ESCAPE/ARROWS ----------
+    li t2, 27           # ESC
+    beq a0, t2, handle_escape
+
+    # ---------- ENTER ----------
     li t2, '\n'
     beq a0, t2, yield_prepare_input
 
     li t2, '\r'
     beq a0, t2, yield_prepare_input
 
+    # ---------- Обычный символ ----------
+    j yield_regular_char
+
+# ===== backspace =====
+handle_backspace:
+    la t2, buffer_index
+    lb t3, 0(t2)
+
+    beqz t3, yield_processes   # если буфер пуст – ничего не делаем
+
+    addi t3, t3, -1
+    sb t3, 0(t2)               # уменьшили длину
+
+    la t2, buffer
+    add t2, t2, t3
+    sb zero, 0(t2)             # опционально занулили последний байт
+
+    li a0, 8                   # '\b'
+    sb a0, 0(t0)
+    li a0, ' '
+    sb a0, 0(t0)
+    li a0, 8
+    sb a0, 0(t0)
+
+    j yield_processes
+
+# ===== ESC-последовательность (стрелки) =====
+handle_escape:
+    # ждём 2‑й байт ESC‑последовательности
+1:
+    lb t2, UART_LSR(t0)
+    andi t2, t2, LSR_RX_READY
+    beqz t2, 1b            # назад к метке 1:
+    lb t2, 0(t0)           # обычно '['
+
+    # ждём 3‑й байт (A/B/C/D)
+2:
+    lb t2, UART_LSR(t0)
+    andi t2, t2, LSR_RX_READY
+    beqz t2, 2b            # назад к метке 2:
+    lb t2, 0(t0)
+
+    j yield_processes
+
+# ===== обычный символ =====
+yield_regular_char:
     la t2, buffer_index
     lb t3, 0(t2)
     la t2, buffer
     add t2, t2, t3
 
-    # кладём символ в буффер
     sb a0, 0(t2)
     addi t3, t3, 1
     la t2, buffer_index
     sb t3, 0(t2)
 
-    sb a0, 0(t0) # putc (echo)
-
+    sb a0, 0(t0)       # echo
     j yield_processes
+
 yield_prepare_input:
     la t2, buffer_index
     lb t3, 0(t2)
@@ -799,6 +887,7 @@ debug_cmd:              .string "debug"
 shutdown_cmd:           .string "shutdown"
 ps_cmd:                 .string "ps"
 reboot_cmd:             .string "reboot"
+clear_cmd:              .string "clear"
 # ===============================================
 
 # ================== Процессы ===================
@@ -837,3 +926,5 @@ msg_kernel_panic_4:     .string "Where are all the processes?\r\n"
 rec_kernel_panic_0:     .string "Please, press r to reboot\r\n"
 rec_kernel_panic_1:     .string "...or press s to shutdown.\r\n"
 # ===============================================
+cursor_home_seq:        .string "\x1b[H"
+scroll_up_seq:      .string "\x1b[999S"
