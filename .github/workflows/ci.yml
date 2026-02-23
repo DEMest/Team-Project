@@ -1,1 +1,31 @@
+name: Simple Test
 
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install tools
+      run: sudo apt install -y gcc-riscv64-linux-gnu qemu-system-misc make
+    
+    - name: Build
+      run: |
+        cd builder
+        make PLATFORM=qemu
+    
+    - name: Test in QEMU
+      run: |
+        cd builder
+        timeout 10s qemu-system-riscv64 -machine virt -nographic -kernel kernel.elf 2>&1 | tee output.txt
+        
+        if grep -q "coded by Team 42" output.txt && grep -q "Simos says~" output.txt; then
+          echo "Тест пройден!"
+          exit 0
+        else
+          echo "Ожидаемые сообщения не найдены"
+          cat output.txt
+          exit 1
+        fi
