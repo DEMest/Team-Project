@@ -92,3 +92,11 @@ build-and-run: all run
 # Пересборка (аналогично all)
 .PHONY: rebuild
 rebuild: all
+
+# Запуск Python интеграционных тестов
+.PHONY: test
+test: all
+	@echo "Установка зависимостей для тестов..."
+	pip3 install -r tests/requirements.txt --quiet 2>/dev/null || pip3 install --user -r tests/requirements.txt --quiet
+	@echo "Запуск тестов..."
+	python3 -m pytest tests/ -v
