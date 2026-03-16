@@ -1,0 +1,12 @@
+# Claude Code
+.claude/
+CLAUDE.md
+docs/superpowers/
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Test artifacts
+test-report.html
