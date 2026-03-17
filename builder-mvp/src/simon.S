@@ -1,0 +1,534 @@
+#define UART0_BASE              0x10000000
+#define UART_LSR                5
+#define LSR_RX_READY            1
+#define BUFFER_SIZE             64
+
+#define MAGIC_ADDRESS           0x100000
+#define SHUTDOWN_SIG            0x5555
+#define REBOOT_SIG              0x7777
+
+#define PROC_STATE_UNUSED       0x0000
+#define PROC_STATE_RUNNING      0xffff
+
+.section .text
+.global _start
+
+/* -----------------------------------------------------------------------
+    Memory Map (RISC-V 64-bit)
+
+               < 0x80010000 : boot  - stage 1
+    0x80010000 - 0x8004FFFF : simon - stage 2 + payload files (stage 3, for now)
+    0x80050000 - 0x8006ffff : process descriptors (max 16, 4 KB each)
+                                offset  len     description
+                                0x000   0x008   PID
+                                0x008   0x008   process state
+                                0x010   0x008   sp
+                                0x018   0x058   registers
+                                0x070   0x001   forked?
+                                0x071   0x008   child exit code
+                                0x079   0x007   unused
+                                0x080   0x008   name
+                                0x088   0xf78   stack
+    0x80070000 - 0x8007ffff : file names (max 64, 1 KB each)
+    0x80080000 - 0x8008ffff : stdin device buffer
+    0x80090000 - 0x8009000f : stdin disk locator    
+                                    { logical sector (4 bytes), offset (2 bytes) }
+    0x80090010 - 0x8009ffff : unused
+    0x80100000 - 0x801003ff : file descriptor
+                                    { address, length }
+    0x80100400 - ???
+----------------------------------------------------------------------- */
+
+# a0 - pointer, where boot stopped compiling
+
+_start:
+    la t0, script_ptr
+    sd a0, 0(t0)
+
+    auipc sp, 0
+    li t0, 0x100000
+    add sp, sp, t0
+
+    la t0, next_file_data
+    li t1, 0x80100000
+    sd t1, 0(t0)
+
+    la a0, greetings
+    call puts
+    
+
+# =====================================================
+
+
+sish:
+    la t0, script_ptr
+    ld t1, 0(t0)
+sish_loop:
+    li t0, 0
+    lb t0, 0(t1)
+    beqz t0, sish_init
+
+    mv a0, t1
+    la a1, str_src
+    call cmdcmp
+    beqz a0, not_founded
+
+    la a0, sym_newline
+    call puts
+not_founded: 
+    addi t1, t1, 1
+    j sish_loop
+sish_init:
+    la a0, cmd_prefix
+    call puts
+
+    la s1, buffer
+    li s2, 0
+
+input_loop:
+    call getc
+
+    li t0, '\n'
+    beq a0, t0, output
+    li t0, '\r'
+    beq a0, t0, output
+
+    li t0, BUFFER_SIZE
+    bge s2, t0, input_loop
+
+    # Echo-вывод символа
+    call putc
+
+    # Запись в буфер по адресу
+    sb a0, 0(s1)
+    addi s1, s1, 1
+    addi s2, s2, 1
+
+    j input_loop
+output:
+    sb zero, 0(s1)
+    la a0, sym_newline
+    call puts
+    
+    # Проверки на команды -----------------------------
+    # shutdown
+    la a0, buffer
+    la a1, shutdown_cmd
+    call cmdcmp
+    beqz a0, shutdown
+
+    # reboot
+    la a0, buffer 
+    la a1, reboot_cmd
+    call cmdcmp
+    beqz a0, reboot
+
+    # debug - для проверки отдельных элементов кода, в нашем случае kernel panic
+    la a0, buffer
+    la a1, debug_cmd
+    call cmdcmp
+    beqz a0, debug
+    # -------------------------------------------------
+    
+    la a0, echo_cmd
+    call puts
+    la a0, buffer
+    call puts
+
+    la a0, buffer
+    li a1, 0
+    li a2, BUFFER_SIZE
+    call memset
+
+    j sish_init
+
+
+# ================= РЕАЛИЗАЦИЯ КОМАНД =================
+
+# Команда shutdown
+# 0x100000 - адрес для исполнения магических команд в зависимости от значения
+shutdown:    
+    li t0, MAGIC_ADDRESS
+    li t1, SHUTDOWN_SIG
+    sw t1, 0(t0)
+    
+    # если трюк не сработал - уходим в бесконечный цикл и наслаждаемся своей беспомощностью
+    j shutdown
+
+# Команда reboot
+reboot:
+    li t0, MAGIC_ADDRESS
+    li t1, REBOOT_SIG
+    sw t1, 0(t0)
+    
+    # если не сработало, пытаемся просто выключить
+    j shutdown 
+
+debug:
+    j debug
+
+# =====================================================
+
+
+
+# ====================== УТИЛИТЫ ======================
+
+# Kernel panic
+# a0 - адрес на вид ошибки
+kernel_panic:
+    mv t0, a0 
+    la a0, msg_kernel_panic
+    call puts
+    mv a0, t0
+    call puts 
+
+    la a0, rec_kernel_panic_0
+    call puts
+    la a0, rec_kernel_panic_1
+    call puts
+kernel_panic_loop: 
+    call getc 
+
+    li t0, 'r'
+    beq a0, t0, reboot
+    li t0, 's'
+    beq a0, t0, shutdown
+
+    j kernel_panic_loop
+
+/*
+    Длина строки
+
+    Аргументы:
+    a0 - адрес на строку
+
+    Вывод:
+    a0 - кол-во символов до нулевого символа
+*/
+strlen:
+    li t0, 0
+strlen_loop:
+    lb t1, 0(a0)
+    beqz t1, strlen_done
+
+    addi t0, t0, 1
+    addi a0, a0, 1
+
+    j strlen_loop
+strlen_done:
+    mv a0, t0
+    ret
+
+/*
+    Сравнение строк (нормальная версия)
+
+    Аргументы:
+    a0 - адрес на строку
+    a1 - адрес на строку
+
+    Вывод:
+    a0 - 0 если строки одинаковы, иначе 1
+*/
+strcmp:
+strcmp_loop:
+    lb t0, 0(a0)
+    lb t1, 0(a1)
+    
+    bne t0, t1, strcmp_not_equal 
+
+    add t2, t0, t1
+    beqz t2, strcmp_equal
+
+    addi a0, a0, 1
+    addi a1, a1, 1
+    j strcmp_loop
+strcmp_equal:
+    li a0, 0
+    ret
+strcmp_not_equal:
+    li a0, 1
+    ret
+
+
+/*  
+    Сравнение строк (версия для команд)
+    
+    Аргументы:
+    a0 - адрес на строку
+    a1 - адрес на строку
+
+    Вывод:
+    a0 - 0 если строки одинаковы, иначе 1
+
+    (!!!) строки считаются одинаковыми, если функция 
+    дошла до нулевого символа строки в адресе a1, т. е.:
+    a0: some text blablabla\0
+    a1: some text\0
+    считаются одинаковыми строками
+*/
+cmdcmp:
+cmdcmp_loop:
+    lb t0, 0(a0)
+    lb t1, 0(a1)
+    
+    beqz t1, cmdcmp_equal
+    bne t0, t1, cmdcmp_not_equal 
+    
+    addi a0, a0, 1
+    addi a1, a1, 1
+    j cmdcmp_loop
+cmdcmp_equal:
+    li a0, 0
+    ret
+cmdcmp_not_equal:
+    li a0, 1
+    ret
+
+
+/*
+    Заполнение блока памяти заданным значением
+
+    Аргументы:
+    a0 - адрес на ячейку памяти
+    a1 - значение
+    a2 - количество ячеек
+
+    Вывод: 
+    - 
+*/
+memset:
+memset_loop:
+    beqz a2, memset_done
+
+    sb a1, 0(a0)
+    addi a0, a0, 1
+    addi a2, a2, -1
+
+    j memset_loop
+memset_done:
+    ret
+
+
+/*
+    Копирование блока памяти из (1) адреса во (2)
+
+    Аргументы:
+    a0 - адрес (1)
+    a1 - адрес (2)
+    a2 - кол-во ячеек для копирования
+
+    Вывод:
+    -
+*/
+memcpy:
+memcpy_loop:
+    beqz a2, memcpy_done
+
+    lb t0, 0(a0)
+    sb t0, 0(a1)
+
+    addi a0, a0, 1
+    addi a1, a1, 1
+    addi a2, a2, -1
+
+    j memcpy_loop
+memcpy_done:
+    ret 
+
+
+create_process:
+    li t0, 0x80050000
+    li t1, 16
+    li t2, 0
+
+create_process_loop:
+    beq t2, t1, create_process_no_slot
+
+    ld t3, 0x008(t0)
+    beqz t3, create_process_slot_found
+
+    addi t2, t2, 1
+    li t3, 0x1000
+    add t0, t0, t3
+    j create_process_loop
+create_process_no_slot:
+    la a0, msg_kernel_panic_3
+    call kernel_panic
+create_process_slot_found:
+    mv t1, t2
+    sd t1, 0x000(t0)
+
+    li t2, PROC_STATE_RUNNING
+    sd t2, 0x008(t0)
+
+    li t3, 0xfff
+    add t3, t0, t3
+    addi t3, t3, -104 
+    sd a0,   0(t3)      # ra = pc 
+    sd zero, 8(t3)      # s0
+    sd zero, 16(t3)     # s1
+    sd zero, 24(t3)     # s2
+    sd zero, 32(t3)     # s3
+    sd zero, 40(t3)     # s4
+    sd zero, 48(t3)     # s5
+    sd zero, 56(t3)     # s6
+    sd zero, 64(t3)     # s7
+    sd zero, 72(t3)     # s8
+    sd zero, 80(t3)     # s9
+    sd zero, 88(t3)     # s10
+    sd zero, 96(t3)     # s11
+
+    sd t3, 0x010(t0)
+
+    li t2, 0
+    sb t2, 0x070(t0)
+
+    sd a1, 0x080(t0)
+    ret
+
+
+switch_context:
+    addi sp, sp, -104 # ага...
+    sd ra, 0(sp)
+    sd s0, 8(sp)
+    sd s1, 16(sp)
+    sd s2, 24(sp)
+    sd s3, 32(sp)
+    sd s4, 40(sp)
+    sd s5, 48(sp)
+    sd s6, 56(sp)
+    sd s7, 64(sp)
+    sd s8, 72(sp)
+    sd s9, 80(sp)
+    sd s10, 88(sp)
+    sd s11, 96(sp)
+
+    sd sp, 0x010(a0)
+    ld sp, 0x010(a1)
+
+    la t0, current_proc
+    sd a1, 0(t0)
+
+    ld ra, 0(sp)
+    ld s0, 8(sp)
+    ld s1, 16(sp)
+    ld s2, 24(sp)
+    ld s3, 32(sp)
+    ld s4, 40(sp)
+    ld s5, 48(sp)
+    ld s6, 56(sp)
+    ld s7, 64(sp)
+    ld s8, 72(sp)
+    ld s9, 80(sp)
+    ld s10, 88(sp)
+    ld s11, 96(sp)
+    addi sp, sp, 104
+    ret
+
+
+# put char
+putc:
+    li t0, UART0_BASE
+    sb a0, 0(t0)
+    ret
+
+
+# get char
+getc:
+    li t0, UART0_BASE
+1:
+    lb t1, UART_LSR(t0)
+    andi t1, t1, LSR_RX_READY
+    beqz t1, 1b
+    lb a0, 0(t0)
+    ret
+
+
+# put string
+puts:
+    mv t1, a0
+    li t2, UART0_BASE
+puts_loop:
+    lb a0, (t1)
+    beqz a0, puts_done
+    sb a0, 0(t2)
+    addi t1, t1, 1
+    j puts_loop
+puts_done:
+    ret
+
+
+# put hex
+puth:
+    addi sp, sp, -24
+    sd s0, 0(sp)
+    sd s1, 8(sp)
+    sd ra, 16(sp)
+    
+    mv s0, a0
+    li s1, 16
+
+    la a0, sym_hexnum
+    call puts
+puth_loop:
+    srli a0, s0, 60
+    andi a0, a0, 0xF
+
+    li t0, 10
+    blt a0, t0, puth_digit
+    addi a0, a0, 87 # сделал буквы маленькими, чтобы в глазах не рябило
+    j puth_output
+puth_digit:
+    addi a0, a0, 48
+puth_output:
+    call putc
+    
+    slli s0, s0, 4
+    
+    addi s1, s1, -1
+    bnez s1, puth_loop
+    
+puth_done:
+    ld ra, 16(sp)
+    ld s1, 8(sp)
+    ld s0, 0(sp)
+    addi sp, sp, 24
+    ret
+
+# =============== Вспомогательное ===============
+cmd_prefix:             .string "\n\rSimon says~: "
+echo_cmd:               .string "echo answered " # <- сделал не в совсем привычном виде, к командам не отношу
+
+sym_newline:            .string "\r\n"
+sym_space:              .string " "
+sym_hexnum:             .string "0x"
+str_src:                .string "src"
+greetings:              .string "[BOOTED]: Stage 2 (simon) - coded by Team 42."
+# ===============================================
+
+# =================== Команды ===================
+debug_cmd:              .string "debug"
+shutdown_cmd:           .string "shutdown"
+reboot_cmd:             .string "reboot"
+# ===============================================
+
+# ================= Для ошибок ==================
+msg_kernel_panic:       .string "[KERNEL PANIC]: "
+
+# err messages
+msg_kernel_panic_0:     .string "Debug\r\n"
+msg_kernel_panic_1:     .string "Buffer overflowed\r\n"
+msg_kernel_panic_2:     .string "Out of memory\r\n"
+msg_kernel_panic_3:     .string "No free process slots\r\n"
+msg_kernel_panic_4:     .string "Where are all the processes?\r\n"
+
+# recommendation message
+rec_kernel_panic_0:     .string "Please, press r to reboot\r\n"
+rec_kernel_panic_1:     .string "...or press s to shutdown.\r\n"
+# ===============================================
+
+script_ptr:             .space  8
+next_file_data:         .space  8
+buffer:                 .space  BUFFER_SIZE
+current_proc:           .space  8
+next_sector:
