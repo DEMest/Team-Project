@@ -23,3 +23,15 @@ jobs:
       run: |
         cd builder-syscall
         make test
+
+    - name: Verify hex0 file creation
+      run: |
+        cd builder-syscall
+        # Проверяем существование файла. Если его нет, шаг завершится с ошибкой (exit 1).
+        test -f hex0 || (echo "Ошибка: Файл hex0 не найден после сборки!" && exit 1)
+        echo "Успех: Файл hex0 на месте."
+
+    - name: Run tests
+      run: |
+        cd builder-syscall
+        make test
