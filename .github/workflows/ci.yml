@@ -23,3 +23,15 @@ jobs:
       run: |
         cd builder-syscall
         make test
+
+    - name: Verify qemu_bin file creation
+      run: |
+        cd builder-syscall
+        # Проверяем существование файла. Если его нет, шаг завершится с ошибкой (exit 1).
+        test -f image_qemu.bin || (echo "Ошибка: Финальный образ image_qemu.bin не найден!" && exit 1)
+        echo "Успех: Образ image_qemu.bin на месте."
+
+    - name: Run tests
+      run: |
+        cd builder-syscall
+        make test
