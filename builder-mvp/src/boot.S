@@ -134,6 +134,6 @@ puts_done:
     ret
 
 greetings: .string "[BOOTED]: Stage 1 (boot) - coded by ylab-nsu.\n\r"
-builded: .string "[BUILDED]: Jumping to stage 2.\n\n\r"
+builded: .string "[BUILDED]: Jump to stage 2.   \n\n\r"
 
 payload_src:
