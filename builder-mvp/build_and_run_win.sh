@@ -16,7 +16,7 @@ chmod +x ./bin-to-hex0.sh
 ./add_null.sh simon.hex0
 
 echo "--- Creating final image ---"
-cat boot.bin simon.hex0 payload.hex0 payload.hex0 > image_qemu.bin
+cat boot.bin simon.hex0 payload.hex0 payload.hex0 > image_payload.bin
 
 echo "--- Starting QEMU ---"
-qemu-system-riscv64 -M virt -bios image_qemu.bin -monitor stdio
+qemu-system-riscv64 -M virt -bios image_payload.bin -monitor stdio
