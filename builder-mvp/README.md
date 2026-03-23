@@ -21,7 +21,7 @@ image_payload.bin = boot ^ simon ^ payload
 ```
 Остальные два файла были заимствованны из зимней школы: boot немного видоизменён для эстетики, а payload принимается за "третью стадию". Для более подробной информации обращайтесь к [parts.rst](https://github.com/DEMest/Team-Project/blob/feature/stage3/builder-mvp/parts.rst).
 
-![Демонстрация работа](https://imgur.com/a/7XuCwHt)
+![Демонстрация работы](./demo.png)
 
 ## Иные файлы
 * [bin-to-hex0.sh](https://github.com/DEMest/Team-Project/blob/feature/stage3/builder-mvp/bin-to-hex0.sh) - перевод бинарника в формат hex0.
