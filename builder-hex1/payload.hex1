@@ -1,0 +1,33 @@
+src hello.hex1
+
+; === offset 0: прыжок через таблицу указателей ===
+29 A0           ; c.j :code  (+10)
+
+; === offset 2: таблица указателей ===
+; hex1 сам подставит абсолютный адрес :hello — не нужно считать вручную
+$hello
+
+; === offset 10: код ===
+:code
+97 02 00 00     ; auipc t0, 0        → t0 = PC = file_base + 10
+93 82 82 FF     ; addi t0, t0, -8    → t0 = file_base + 2 = адрес $hello
+83 B4 02 00     ; ld s1, 0(t0)       → s1 = абсолютный адрес :hello
+
+; === offset 22: цикл печати ===
+:loop
+03 85 04 00     ; lb a0, 0(s1)
+09 C5           ; beqz a0, :halt     (+10 → offset 36)
+85 04           ; addi s1, s1, 1
+EF 00 80 00     ; jal ra, :uart_putc (+8  → offset 38)
+D5 BF           ; j :loop            (-12 → offset 22)
+
+:halt
+01 A0           ; j :halt
+
+:uart_putc
+B7 05 00 10     ; lui a1, 0x10000
+23 80 A5 00     ; sb a0, 0(a1)
+82 80           ; ret
+
+:hello
+48 65 6C 6C 6F 2C 20 57 6F 72 6C 64 21 0A 00    ; "Hello, World!\n"

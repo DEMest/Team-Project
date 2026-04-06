@@ -10,7 +10,7 @@ CFLAGS = -mabi=lp64d -march=rv64gc -nostdlib -ffreestanding
 # Настраиваемые имена файлов (можно переопределить при вызове make)
 BOOT_SRC ?= src/boot.S
 SIMON_SRC ?= src/simon.S
-FS_FILES ?= payload.hex0
+FS_FILES ?= payload.hex1
 OUTPUT_IMAGE ?= image_qemu.bin
 
 BOOT_ELF = boot.elf
