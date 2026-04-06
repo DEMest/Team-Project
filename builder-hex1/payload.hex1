@@ -1,4 +1,4 @@
-src hello.hex1
+src payload.hex1
 
 ; === offset 0: прыжок через таблицу указателей ===
 29 A0           ; c.j :code  (+10)
