@@ -546,10 +546,8 @@ hex1_p1:
     beq s2, t0, hex1_p1_comment
     li t0, 0x3A
     beq s2, t0, hex1_p1_label
-    li t0, 0x40
-    beq s2, t0, hex1_p1_ref4
-    li t0, 0x24
-    beq s2, t0, hex1_p1_ref8
+    li t0, 0x25
+    beq s2, t0, hex1_p1_ref
 
     li t0, (F_LOWERCASE + 1)
     bge s2, t0, hex1_p1
@@ -595,10 +593,7 @@ hex1_p1_label:
     sd t1, 0(t0)
     j hex1_p1_skip
 
-hex1_p1_ref4:
-    addi s5, s5, 4
-    j hex1_p1_skip
-hex1_p1_ref8:
+hex1_p1_ref:
     addi s5, s5, 8
 hex1_p1_skip:
     lb t0, 0(s1)
@@ -633,10 +628,8 @@ hex1_p2:
     beq s2, t0, hex1_p2_comment
     li t0, 0x3A
     beq s2, t0, hex1_p2_skip
-    li t0, 0x40
-    beq s2, t0, hex1_p2_ref4
-    li t0, 0x24
-    beq s2, t0, hex1_p2_ref8
+    li t0, 0x25
+    beq s2, t0, hex1_p2_ref
 
     li t0, (F_LOWERCASE + 1)
     bge s2, t0, hex1_p2
@@ -695,21 +688,7 @@ hex1_p2_skip:
     addi s1, s1, 1
     j hex1_p2_skip
 
-hex1_p2_ref4:
-    call hex1_lookup
-    sub a0, a0, s5
-    addi a0, a0, -4
-    sb a0, 0(s5)
-    srli t0, a0, 8
-    sb t0, 1(s5)
-    srli t0, a0, 16
-    sb t0, 2(s5)
-    srli t0, a0, 24
-    sb t0, 3(s5)
-    addi s5, s5, 4
-    j hex1_p2
-
-hex1_p2_ref8:
+hex1_p2_ref:
     call hex1_lookup
     sb a0, 0(s5)
     srli t0, a0, 8
@@ -748,7 +727,7 @@ hex1_done:
 /*
     Поиск метки в таблице по имени
 
-    Вход: s1 = указатель на имя в исходнике (первый символ после @ или $)
+    Вход: s1 = указатель на имя в исходнике (первый символ после %)
           s7 = базовый адрес выходного буфера
     Выход: a0 = абсолютный адрес метки (s7 + смещение), s1 сдвинут за имя
     Использует: t0-t6, a0, a1
