@@ -4,7 +4,7 @@
 #define UART0_BASE 0xFFE7014000
 #endif
 
-#define UART_LSR   0x05
+#define UART_LSR   0x14
 #define LSR_RX_READY 0x01
 #define BUFFER_SIZE 0x10
 
