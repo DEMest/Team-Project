@@ -594,7 +594,7 @@ hex1_p1_label:
     j hex1_p1_skip
 
 hex1_p1_ref:
-    addi s5, s5, 8
+    addi s5, s5, 4
 hex1_p1_skip:
     lb t0, 0(s1)
     beqz t0, hex1_p1_done
@@ -690,6 +690,8 @@ hex1_p2_skip:
 
 hex1_p2_ref:
     call hex1_lookup
+    sub a0, a0, s5
+    addi a0, a0, -4
     sb a0, 0(s5)
     srli t0, a0, 8
     sb t0, 1(s5)
@@ -697,15 +699,7 @@ hex1_p2_ref:
     sb t0, 2(s5)
     srli t0, a0, 24
     sb t0, 3(s5)
-    srli t0, a0, 32
-    sb t0, 4(s5)
-    srli t0, a0, 40
-    sb t0, 5(s5)
-    srli t0, a0, 48
-    sb t0, 6(s5)
-    srli t0, a0, 56
-    sb t0, 7(s5)
-    addi s5, s5, 8
+    addi s5, s5, 4
     j hex1_p2
 
 hex1_p2_done:
