@@ -38,6 +38,13 @@ class TestCommands(unittest.TestCase):
         self.qemu.send('ls')
         self.qemu.expect(r'Simon says~')
 
+    def test_kernel_panic_handling(self):
+        """Проверка перехвата Kernel Panic и штатной перезагрузки."""
+        self.qemu.send('debug') # Твой simon.S вызывает panic на эту команду
+        self.qemu.expect(r'\[KERNEL PANIC\]')
+        self.qemu.expect(r'Please, press r to reboot')
+        self.qemu.send('r')
+        self.qemu.expect(r'Stage 1', timeout=5)
 
 class TestHex0(unittest.TestCase):
     """Проверяет компиляцию и запуск hex0 файлов."""

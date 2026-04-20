@@ -233,8 +233,8 @@ reboot:
 
 
 debug:
-    j debug
-
+    la a0, msg_kernel_panic_0
+    call kernel_panic
 
 
 ls:

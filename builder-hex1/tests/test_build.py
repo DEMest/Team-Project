@@ -28,6 +28,6 @@ class TestMakeBuild(unittest.TestCase):
 
     def test_no_temp_files_after_build(self):
         """Временные файлы удаляются после сборки."""
-        for name in ['boot.elf', 'boot.bin', 'simon.elf', 'simon.bin', 'simon.hex0']:
+        for name in ['boot.elf', 'boot.bin', 'simon.elf', 'simon.bin', 'simon.hex0', 'simon.hex1', 'payload.hex0.bin', 'payload.hex1.bin']:
             path = os.path.join(ROOT, name)
             self.assertFalse(os.path.exists(path), f'{name} не был удалён')
