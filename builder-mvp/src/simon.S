@@ -33,12 +33,12 @@
                                 0x000   0x008   PID
                                 0x008   0x008   process state
                                 0x010   0x008   sp
-                                0x018   0x058   registers
-                                0x070   0x001   forked?
-                                0x071   0x008   child exit code
-                                0x079   0x007   unused
-                                0x080   0x008   name
-                                0x088   0xf78   stack
+                                0x018   0x068   registers
+                                0x080   0x001   forked?
+                                0x081   0x008   child exit code
+                                0x089   0x007   unused
+                                0x090   0x008   name
+                                0x098   0xf68   stack
     0x80070000 - 0x8007ffff : file names (max 64, 1 KB each)
     0x80080000 - 0x8008ffff : stdin device buffer
     0x80090000 - 0x8009000f : stdin disk locator    
@@ -67,8 +67,35 @@ _start:
     li t1, 0x80100000
     sd t1, 0(t0)
 
-    la a0, greetings
-    call puts
+    la t0, yield
+    csrw mtvec, t0
+
+    li t0, 0x200BFF8 
+    ld t1, 0(t0)
+    li t2, 1000000
+    add t1, t1, t2
+    li t0, 0x2004000
+    sd t1, 0(t0) 
+
+    li t0, 0x80
+    csrs mie, t0 
+
+    li t0, 0x8
+    csrs mstatus, t0
+
+    la a0, idle_proc
+    la a1, ps_name_idle
+    call create_process
+
+    la a0, sish
+    la a1, ps_name_sish
+    call create_process
+loop:
+    j loop
+
+idle_proc:
+    la a0, msg_kernel_panic_4
+    call kernel_panic
     
 
 # =====================================================
@@ -123,34 +150,22 @@ skip_file_loop_done:
     j sish_loop
 
 sish_init:
+    beqz a7, sish_init
+    
     la a0, cmd_prefix
     call puts
 
-    la s1, buffer
-    li s2, 0
-
 input_loop:
-    call getc
+    la t0, buffer_ready
+    lb t1, 0(t0)
+    bnez t1, output
 
-    li t0, '\n'
-    beq a0, t0, output
-    li t0, '\r'
-    beq a0, t0, output
-
-    li t0, BUFFER_SIZE
-    bge s2, t0, input_loop
-
-    # Echo-вывод символа
-    call putc
-
-    # Запись в буфер по адресу
-    sb a0, 0(s1)
-    addi s1, s1, 1
-    addi s2, s2, 1
+    # la a0, hex0_builded
+    # call puts
 
     j input_loop
 output:
-    sb zero, 0(s1)
+    # sb zero, 0(s1)
     la a0, sym_newline
     call puts
     
@@ -199,6 +214,16 @@ output_done:
     li a1, 0
     li a2, BUFFER_SIZE
     call memset
+
+    la t0, buffer_ready
+    li t1, 0
+    sb t1, 0(t0)
+
+    la t0, buffer_index
+    li t1, 0
+    sb t1, 0(t0)
+
+    li a7, 0
 
     j sish_init
 
@@ -428,34 +453,235 @@ do:
     li t1, 0x8007ffff
     li t2, 0x3ff
     li t3, 0
-do_find_file:
-    bge t0, t1, do_done
+    do_find_file:
+        bge t0, t1, do_done
 
-    mv a0, t0
-    mv a1, s1
-    call strcmp
-    beqz a0, do_file_founded
+        mv a0, t0
+        mv a1, s1
+        call strcmp
+        beqz a0, do_file_founded
 
-    addi t3, t3, 1
-    add t0, t0, t2
-    j do_find_file
-do_file_founded:
-    mv t1, t3
-    li t2, 0x80100000
-    li t3, 0x10
-    mul t1, t1, t3
-    add t1, t1, t2
+        addi t3, t3, 1
+        add t0, t0, t2
+        j do_find_file
+    do_file_founded:
 
-    ld t0, 0(t1)
+        mv t1, t3
+        li t2, 0x80100000
+        li t3, 0x10
+        mul t1, t1, t3
+        add t1, t1, t2
 
-    jalr zero, (t0) 
-do_done:
-    j output_done
+        ld a0, 0(t1)
+        mv a1, s1
+
+        call create_process 
+
+        # ld t0, 0(t1)
+
+        # jalr zero, (t0) 
+    do_done:
+        j output_done
 # =====================================================
 
 
 
 # ====================== УТИЛИТЫ ======================
+.align 4
+yield:
+    li t0, UART0_BASE
+    lb t1, UART_LSR(t0)
+    andi t1, t1, LSR_RX_READY
+    beqz t1, yield_processes
+
+    lb a0, 0(t0) # getc
+
+    li t2, '\n'
+    beq a0, t2, yield_prepare_input
+
+    li t2, '\r'
+    beq a0, t2, yield_prepare_input
+
+yield_regular_char:
+    la t2, buffer_index
+    lb t3, 0(t2)
+    la t2, buffer
+    add t2, t2, t3
+
+    sb a0, 0(t2)
+    addi t3, t3, 1
+    la t2, buffer_index
+    sb t3, 0(t2)
+
+    sb a0, 0(t0)       # echo
+    j yield_processes
+yield_prepare_input:
+    la t2, buffer_index
+    lb t3, 0(t2)
+    la t2, buffer
+    add t2, t2, t3
+
+    sb zero, 0(t2)
+    addi t3, t3, 1
+    la t2, buffer_index
+    sb t3, 0(t2)
+
+    li t2, 1
+    la t3, buffer_ready
+    sb t2, 0(t3)
+
+yield_processes:
+    csrw mscratch, t0
+    la t0, current_proc
+    ld t0, 0(t0)
+    beqz t0, find_next
+
+    sd sp, 0x10(t0)
+    csrr t1, mepc
+    sd t1, 0x18(t0)
+    
+    sd s0, 0x20(t0); sd s1, 0x28(t0); sd s2, 0x30(t0)
+    sd s3, 0x38(t0); sd s4, 0x40(t0); sd s5, 0x48(t0)
+    sd s6, 0x50(t0); sd s7, 0x58(t0); sd s8, 0x60(t0)
+    sd s9, 0x68(t0); sd s10, 0x70(t0); sd s11, 0x78(t0)
+
+find_next:
+    la t0, current_proc
+    ld t1, 0(t0)
+    mv t2, t1 
+    bnez t1, search_loop
+
+    li t1, 0x80051000
+    mv t2, t1
+    sd t1, 0(t0)
+search_loop:    
+    li t3, 0x1000
+    add t2, t2, t3
+    li t4, 0x80070000
+    beq t2, t4, search_loop_overflow
+
+    ld t3, 0x8(t2)
+    li t4, 0xffff
+    beq t3, t4, found_task  
+
+    j search_loop
+search_loop_overflow:
+    li t2, 0x80051000
+
+    ld t3, 0x8(t2)
+    li t4, 0xffff
+    beq t3, t4, found_task
+
+    j search_loop
+search_loop_idle:    
+    li t1, 0x80050000
+    ld t3, 0x8(t1)
+    li t4, 0xffff
+    beq t3, t4, found_task
+    
+    la a0, msg_kernel_panic_4
+    j kernel_panic
+
+found_task:
+    mv t1, t2
+    la t0, current_proc
+    sd t1, 0(t0)
+    mv t0, t1
+
+    li t1, 0x200BFF8
+    ld t2, 0(t1)
+    li t3, 1000000
+    add t2, t2, t3
+    li t1, 0x2004000
+    sd t2, 0(t1)
+
+    ld t1, 0x18(t0)
+    csrw mepc, t1
+    
+    ld sp, 0x10(t0)
+    ld ra, 0x18(t0)
+    ld s0, 0x20(t0); ld s1, 0x28(t0); ld s2, 0x30(t0)
+    ld s3, 0x38(t0); ld s4, 0x40(t0); ld s5, 0x48(t0)
+    ld s6, 0x50(t0); ld s7, 0x58(t0); ld s8, 0x60(t0)
+    ld s9, 0x68(t0); ld s10, 0x70(t0); ld s11, 0x78(t0)
+
+    li a7, 1
+
+    csrr t0, mscratch
+    mret
+
+create_process:
+    li t0, 0x80050000   # ADDRESS
+    li t1, 0            # PID
+    create_process_loop:
+        li t2, 0x8006ffff
+        bge t0, t2, create_process_no_slot
+
+        ld t2, 0x8(t0)
+        beqz t2, create_process_slot_found
+
+        addi t1, t1, 1
+        li t3, 0x1000
+        add t0, t0, t3
+        j create_process_loop
+        create_process_no_slot:
+            la a0, msg_kernel_panic_3
+            call kernel_panic
+        create_process_slot_found:
+            sd t1, 0(t0)            # PID
+
+            li t2, PROC_STATE_RUNNING
+            sd t2, 0x8(t0)          # process state
+
+            li t3, 0x1fff
+            add t2, t0, t3
+            sd t2, 0x10(t0)         # sp
+
+            sd a0, 0x18(t0)         # ra = pc
+            sd a1, 0x90(t0)         # name
+
+            ret
+            
+
+
+# a0 - current process address
+# a1 - next process address
+switch_context:
+    sd sp, 0x10(a0)
+    sd ra, 0x18(a0)
+    sd s0, 0x20(a0)
+    sd s1, 0x28(a0)
+    sd s2, 0x30(a0)
+    sd s3, 0x38(a0)
+    sd s4, 0x40(a0)
+    sd s5, 0x48(a0)
+    sd s6, 0x50(a0)
+    sd s7, 0x58(a0)
+    sd s8, 0x60(a0)
+    sd s9, 0x68(a0)
+    sd s10, 0x70(a0)
+    sd s11, 0x78(a0)
+
+    la t0, current_proc
+    sd a1, 0(t0)
+
+    ld sp, 0x10(a1)
+    ld ra, 0x18(a1)
+    ld s0, 0x20(a1)
+    ld s1, 0x28(a1)
+    ld s2, 0x30(a1)
+    ld s3, 0x38(a1)
+    ld s4, 0x40(a1)
+    ld s5, 0x48(a1)
+    ld s6, 0x50(a1)
+    ld s7, 0x58(a1)
+    ld s8, 0x60(a1)
+    ld s9, 0x68(a1)
+    ld s10, 0x70(a1)
+    ld s11, 0x78(a1)
+    ret
+
+
 
 # Kernel panic
 # a0 - адрес на вид ошибки
@@ -470,15 +696,15 @@ kernel_panic:
     call puts
     la a0, rec_kernel_panic_1
     call puts
-kernel_panic_loop: 
-    call getc 
+    kernel_panic_loop: 
+        call getc 
 
-    li t0, 'r'
-    beq a0, t0, reboot
-    li t0, 's'
-    beq a0, t0, shutdown
+        li t0, 'r'
+        beq a0, t0, reboot
+        li t0, 's'
+        beq a0, t0, shutdown
 
-    j kernel_panic_loop
+        j kernel_panic_loop
 
 /*
     Длина строки
@@ -495,21 +721,21 @@ strlen:
     sd t1, 8(sp)
 
     li t0, 0
-strlen_loop:
-    lb t1, 0(a0)
-    beqz t1, strlen_done
+    strlen_loop:
+        lb t1, 0(a0)
+        beqz t1, strlen_done
 
-    addi t0, t0, 1
-    addi a0, a0, 1
+        addi t0, t0, 1
+        addi a0, a0, 1
 
-    j strlen_loop
-strlen_done:
-    mv a0, t0
+        j strlen_loop
+    strlen_done:
+        mv a0, t0
 
-    ld t0, 0(sp)
-    ld t1, 8(sp)
-    addi sp, sp, 16
-    ret
+        ld t0, 0(sp)
+        ld t1, 8(sp)
+        addi sp, sp, 16
+        ret
 
 /*
     Сравнение строк (нормальная версия)
@@ -526,32 +752,32 @@ strcmp:
     sd t0, 0(sp)
     sd t1, 8(sp)
     sd t2, 16(sp)
-strcmp_loop:
-    lb t0, 0(a0)
-    lb t1, 0(a1)
+    strcmp_loop:
+        lb t0, 0(a0)
+        lb t1, 0(a1)
     
-    bne t0, t1, strcmp_not_equal 
+        bne t0, t1, strcmp_not_equal 
 
-    add t2, t0, t1
-    beqz t2, strcmp_equal
+        add t2, t0, t1
+        beqz t2, strcmp_equal
 
-    addi a0, a0, 1
-    addi a1, a1, 1
-    j strcmp_loop
-strcmp_equal:
-    li a0, 0
-    ld t0, 0(sp)
-    ld t1, 8(sp)
-    ld t2, 16(sp)
-    addi sp, sp, -24
-    ret
-strcmp_not_equal:
-    li a0, 1
-    ld t0, 0(sp)
-    ld t1, 8(sp)
-    ld t2, 16(sp)
-    addi sp, sp, -24
-    ret
+        addi a0, a0, 1
+        addi a1, a1, 1
+        j strcmp_loop
+        strcmp_equal:
+            li a0, 0
+            ld t0, 0(sp)
+            ld t1, 8(sp)
+            ld t2, 16(sp)
+            addi sp, sp, -24
+            ret
+        strcmp_not_equal:
+            li a0, 1
+            ld t0, 0(sp)
+            ld t1, 8(sp)
+            ld t2, 16(sp)
+            addi sp, sp, -24
+            ret
 
 
 /*  
@@ -574,28 +800,28 @@ cmdcmp:
     addi sp, sp, -16
     sd t0, 0(sp)
     sd t1, 8(sp)
-cmdcmp_loop:
-    lb t0, 0(a0)
-    lb t1, 0(a1)
+    cmdcmp_loop:
+        lb t0, 0(a0)
+        lb t1, 0(a1)
     
-    beqz t1, cmdcmp_equal
-    bne t0, t1, cmdcmp_not_equal 
+        beqz t1, cmdcmp_equal
+        bne t0, t1, cmdcmp_not_equal 
     
-    addi a0, a0, 1
-    addi a1, a1, 1
-    j cmdcmp_loop
-cmdcmp_equal:
-    li a0, 0
-    ld t0, 0(sp)
-    ld t1, 8(sp)
-    addi sp, sp, 16
-    ret
-cmdcmp_not_equal:
-    li a0, 1
-    ld t0, 0(sp)
-    ld t1, 8(sp)
-    addi sp, sp, 16
-    ret
+        addi a0, a0, 1
+        addi a1, a1, 1
+        j cmdcmp_loop
+        cmdcmp_equal:
+            li a0, 0
+            ld t0, 0(sp)
+            ld t1, 8(sp)
+            addi sp, sp, 16
+            ret
+        cmdcmp_not_equal:
+            li a0, 1
+            ld t0, 0(sp)
+            ld t1, 8(sp)
+            addi sp, sp, 16
+            ret
 
 
 /*
@@ -610,16 +836,16 @@ cmdcmp_not_equal:
     - 
 */
 memset:
-memset_loop:
-    beqz a2, memset_done
+    memset_loop:
+        beqz a2, memset_done
 
-    sb a1, 0(a0)
-    addi a0, a0, 1
-    addi a2, a2, -1
+        sb a1, 0(a0)
+        addi a0, a0, 1
+        addi a2, a2, -1
 
-    j memset_loop
-memset_done:
-    ret
+        j memset_loop
+    memset_done:
+        ret
 
 
 /*
@@ -671,96 +897,6 @@ free_slot_file_name_found:
     ld t0, 0(sp)
     addi sp, sp, 8
     ret 
-
-
-create_process:
-    li t0, 0x80050000
-    li t1, 16
-    li t2, 0
-
-create_process_loop:
-    beq t2, t1, create_process_no_slot
-
-    ld t3, 0x008(t0)
-    beqz t3, create_process_slot_found
-
-    addi t2, t2, 1
-    li t3, 0x1000
-    add t0, t0, t3
-    j create_process_loop
-create_process_no_slot:
-    la a0, msg_kernel_panic_3
-    call kernel_panic
-create_process_slot_found:
-    mv t1, t2
-    sd t1, 0x000(t0)
-
-    li t2, PROC_STATE_RUNNING
-    sd t2, 0x008(t0)
-
-    li t3, 0xfff
-    add t3, t0, t3
-    addi t3, t3, -104 
-    sd a0,   0(t3)      # ra = pc 
-    sd zero, 8(t3)      # s0
-    sd zero, 16(t3)     # s1
-    sd zero, 24(t3)     # s2
-    sd zero, 32(t3)     # s3
-    sd zero, 40(t3)     # s4
-    sd zero, 48(t3)     # s5
-    sd zero, 56(t3)     # s6
-    sd zero, 64(t3)     # s7
-    sd zero, 72(t3)     # s8
-    sd zero, 80(t3)     # s9
-    sd zero, 88(t3)     # s10
-    sd zero, 96(t3)     # s11
-
-    sd t3, 0x010(t0)
-
-    li t2, 0
-    sb t2, 0x070(t0)
-
-    sd a1, 0x080(t0)
-    ret
-
-
-switch_context:
-    addi sp, sp, -104 # ага...
-    sd ra, 0(sp)
-    sd s0, 8(sp)
-    sd s1, 16(sp)
-    sd s2, 24(sp)
-    sd s3, 32(sp)
-    sd s4, 40(sp)
-    sd s5, 48(sp)
-    sd s6, 56(sp)
-    sd s7, 64(sp)
-    sd s8, 72(sp)
-    sd s9, 80(sp)
-    sd s10, 88(sp)
-    sd s11, 96(sp)
-
-    sd sp, 0x010(a0)
-    ld sp, 0x010(a1)
-
-    la t0, current_proc
-    sd a1, 0(t0)
-
-    ld ra, 0(sp)
-    ld s0, 8(sp)
-    ld s1, 16(sp)
-    ld s2, 24(sp)
-    ld s3, 32(sp)
-    ld s4, 40(sp)
-    ld s5, 48(sp)
-    ld s6, 56(sp)
-    ld s7, 64(sp)
-    ld s8, 72(sp)
-    ld s9, 80(sp)
-    ld s10, 88(sp)
-    ld s11, 96(sp)
-    addi sp, sp, 104
-    ret
 
 
 # put char
@@ -878,6 +1014,13 @@ hex0_cmd:               .string "hex0"
 do_cmd:                 .string "do"
 # ===============================================
 
+# ================== Процессы ===================
+ps_name_undefined:      .string "undefined"
+ps_name_idle:           .string "<init>"
+ps_name_sish:           .string "SiSH" 
+ps_name_debug:          .string "debug cmd"
+# ===============================================
+
 # ================= Для ошибок ==================
 msg_kernel_panic:       .string "[KERNEL PANIC]: "
 
@@ -897,5 +1040,7 @@ script_ptr:             .space  8
 file_ptr:               .space  8
 next_file_data:         .space  8
 buffer:                 .space  BUFFER_SIZE
+buffer_index:           .space  1
+buffer_ready:           .space  1
 current_proc:           .space  8
 next_sector:
