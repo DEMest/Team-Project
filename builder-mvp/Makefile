@@ -1,6 +1,5 @@
 # Компилятор и утилиты
-# В WSL/Linux: riscv64-unknown-elf-  |  В Windows: riscv-none-elf-
-CROSS_COMPILE ?= riscv64-unknown-elf-
+CROSS_COMPILE = riscv-none-elf-
 CC = $(CROSS_COMPILE)gcc
 OBJCOPY = $(CROSS_COMPILE)objcopy
 
@@ -9,18 +8,21 @@ CFLAGS = -mabi=lp64d -march=rv64gc -nostdlib -ffreestanding
 
 # Настраиваемые имена файлов (можно переопределить при вызове make)
 BOOT_SRC ?= src/boot.S
-SIMON_SRC ?= src/simon.S
-FS_FILES ?= payload.hex0
+PAYLOAD_SRC ?= src/simon.S
 OUTPUT_IMAGE ?= image_qemu.bin
 
-BOOT_ELF = boot.elf
-BOOT_BIN = boot.bin
-SIMON_ELF = simon.elf
-SIMON_BIN = simon.bin
-SIMON_HEX0 = simon.hex0
+# Автоматически генерируем имена промежуточных файлов на основе входных
+BOOT_NAME = $(basename $(notdir $(BOOT_SRC)))
+PAYLOAD_NAME = $(basename $(notdir $(PAYLOAD_SRC)))
+
+BOOT_ELF = $(BOOT_NAME).elf
+BOOT_BIN = $(BOOT_NAME).bin
+PAYLOAD_ELF = $(PAYLOAD_NAME).elf
+PAYLOAD_BIN = $(PAYLOAD_NAME).bin
+PAYLOAD_HEX0 = $(PAYLOAD_NAME).hex0
 
 # Все временные файлы для очистки
-TEMP_FILES = $(BOOT_ELF) $(BOOT_BIN) $(SIMON_ELF) $(SIMON_BIN) $(SIMON_HEX0)
+TEMP_FILES = $(BOOT_ELF) $(BOOT_BIN) $(PAYLOAD_ELF) $(PAYLOAD_BIN) $(PAYLOAD_HEX0)
 
 # Цель по умолчанию - ВСЕГДА пересобираем
 .PHONY: all
@@ -28,12 +30,11 @@ all: clean-temp
 	@echo "Начало сборки..."
 	$(CC) $(CFLAGS) -Ttext=0x80000000 $(BOOT_SRC) -o $(BOOT_ELF)
 	$(OBJCOPY) -O binary $(BOOT_ELF) $(BOOT_BIN)
-	$(CC) $(CFLAGS) -Ttext=0x80000000 $(SIMON_SRC) -o $(SIMON_ELF)
-	$(OBJCOPY) -O binary $(SIMON_ELF) $(SIMON_BIN)
+	$(CC) $(CFLAGS) -Ttext=0x80000000 $(PAYLOAD_SRC) -o $(PAYLOAD_ELF)
+	$(OBJCOPY) -O binary $(PAYLOAD_ELF) $(PAYLOAD_BIN)
 	chmod +x ./bin-to-hex0.sh
-	./bin-to-hex0.sh $(SIMON_BIN) $(SIMON_HEX0)
-	./add_null.sh $(SIMON_HEX0)
-	cat $(BOOT_BIN) $(SIMON_HEX0) $(FS_FILES) > $(OUTPUT_IMAGE)
+	./bin-to-hex0.sh $(PAYLOAD_BIN) $(PAYLOAD_HEX0)
+	cat $(BOOT_BIN) $(PAYLOAD_HEX0) > $(OUTPUT_IMAGE)
 	@echo "Создан образ: $(OUTPUT_IMAGE) (размер: $(shell stat -c%s $(OUTPUT_IMAGE)) байт)"
 	@echo "Удаление временных файлов..."
 	rm -f $(TEMP_FILES)
@@ -74,7 +75,7 @@ size:
 run:
 	@if [ -f "$(OUTPUT_IMAGE)" ]; then \
 		echo "Запуск в QEMU..."; \
-		qemu-system-riscv64 -M virt -bios $(OUTPUT_IMAGE) -nographic; \
+		qemu-system-riscv64 -M virt -bios $(OUTPUT_IMAGE) -monitor stdio; \
 	else \
 		echo "Файл $(OUTPUT_IMAGE) не существует. Выполните 'make' для сборки."; \
 	fi
