@@ -10,7 +10,7 @@ CFLAGS = -mabi=lp64d -march=rv64gc -nostdlib -ffreestanding
 # Настраиваемые имена файлов (можно переопределить при вызове make)
 BOOT_SRC ?= src/boot.S
 SIMON_SRC ?= src/simon.S
-FS_FILES ?= payload.hex0
+FS_FILES ?= payload.hex0 payload.hex1
 OUTPUT_IMAGE ?= image_qemu.bin
 
 BOOT_ELF = boot.elf
@@ -33,7 +33,8 @@ all: clean-temp
 	chmod +x ./bin-to-hex0.sh
 	./bin-to-hex0.sh $(SIMON_BIN) $(SIMON_HEX0)
 	./add_null.sh $(SIMON_HEX0)
-	cat $(BOOT_BIN) $(SIMON_HEX0) $(FS_FILES) > $(OUTPUT_IMAGE)
+	cat $(BOOT_BIN) $(SIMON_HEX0) > $(OUTPUT_IMAGE)
+	for f in $(FS_FILES); do cat $$f >> $(OUTPUT_IMAGE); last=$$(tail -c1 $$f | xxd -p); [ "$$last" = "00" ] || printf '\0' >> $(OUTPUT_IMAGE); done
 	@echo "Создан образ: $(OUTPUT_IMAGE) (размер: $(shell stat -c%s $(OUTPUT_IMAGE)) байт)"
 	@echo "Удаление временных файлов..."
 	rm -f $(TEMP_FILES)
@@ -86,3 +87,11 @@ build-and-run: all run
 # Пересборка (аналогично all)
 .PHONY: rebuild
 rebuild: all
+
+# Запуск интеграционных тестов
+.PHONY: test
+test: all
+	@echo "Установка зависимостей для тестов..."
+	pip3 install -r tests/requirements.txt --quiet 2>/dev/null || pip3 install --user -r tests/requirements.txt --quiet
+	@echo "Запуск тестов..."
+	python3 -m pytest tests/ -v
