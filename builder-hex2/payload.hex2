@@ -1,0 +1,45 @@
+src payload.hex2
+
+;; === offset 0..1: c.j :code (jump +16 over data block) ===
+01 A8           ; c.j  :code  (+16 from PC=0 -> PC=16)
+
+;; === offset 2..5: 32-bit relative offset to :hello (used at runtime) ===
+%hello
+
+;; === offset 6..13: 64-bit absolute address of :hello (parser test) ===
+$hello
+
+;; === offset 14..15: 16-bit relative offset to :end_marker (parser test) ===
+@end_marker
+
+;; === offset 16: code ===
+:code
+97 02 00 00     ; auipc t0, 0          -> t0 = file_base + 16
+93 82 22 FF     ; addi  t0, t0, -14    -> t0 = file_base + 2 (addr of %hello cell)
+03 A5 02 00     ; lw    a0, 0(t0)      -> a0 = 32-bit relative offset (sign-extended)
+93 82 42 00     ; addi  t0, t0, 4      -> t0 = file_base + 6
+B3 04 55 00     ; add   s1, a0, t0     -> s1 = absolute addr of :hello
+
+;; === offset 36: print loop ===
+:loop
+03 85 04 00     ; lb    a0, 0(s1)
+09 C5           ; c.beqz a0, :halt    (+10 -> offset 50)
+85 04           ; c.addi s1, 1
+EF 00 80 00     ; jal   ra, :uart_putc (+8  -> offset 52)
+D5 BF           ; c.j   :loop          (-12 -> offset 36)
+
+;; === offset 50: halt ===
+:halt
+01 A0           ; c.j  :halt
+
+;; === offset 52: uart_putc ===
+:uart_putc
+B7 05 00 10     ; lui   a1, 0x10000
+23 80 A5 00     ; sb    a0, 0(a1)
+82 80           ; c.ret
+
+;; === offset 62..76: "Hello, World!\n\0" ===
+:hello
+48 65 6C 6C 6F 2C 20 57 6F 72 6C 64 21 0A 00
+
+:end_marker

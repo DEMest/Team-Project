@@ -94,10 +94,13 @@ sish_loop:
 copy_name_loop:
     lb t3, 0(t1)
     beq t3, t2, skip_file_loop_head
+    li t5, 0x0D
+    beq t3, t5, copy_name_skip
 
     sb t3, 0(a0)
 
     addi a0, a0, 1
+copy_name_skip:
     addi t1, t1, 1
     j copy_name_loop
 skip_file_loop_head:
@@ -193,6 +196,11 @@ output:
     la a1, hex1_cmd
     call cmdcmp
     beqz a0, hex1
+
+    la a0, buffer
+    la a1, hex2_cmd
+    call cmdcmp
+    beqz a0, hex2
     # -------------------------------------------------
     
     la a0, echo_cmd
@@ -718,6 +726,315 @@ hex1_done:
     j output_done
 
 
+# =====================================================
+# hex2 — расширение hex1: метки + 4 типа отсылок
+#   :name       — определение метки (0 байт)
+#   @name       — 16-bit LE относительное (value = label - cell - 2)
+#   $name       — 64-bit LE абсолютное (value = label_addr)
+#   %name       — 32-bit LE относительное (value = label - cell - 4)
+# =====================================================
+hex2:
+    la s1, buffer
+    addi s1, s1, 5
+
+    li t0, 0x80070000
+    li t1, 0x8007ffff
+    li t2, 0x3ff
+    li t3, 0
+
+hex2_find_file:
+    bge t0, t1, hex2_done
+    lb a0, 0(s1)
+    beqz a0, hex2_done
+    mv a0, t0
+    mv a1, s1
+    call strcmp
+    beqz a0, hex2_file_found
+    addi t3, t3, 1
+    add t0, t0, t2
+    j hex2_find_file
+
+hex2_file_found:
+    mv t1, t3
+    li t2, 0x10
+    mul t1, t1, t2
+    li t2, 0x80100000
+    add t1, t1, t2
+
+    la a0, hex0_build
+    call puts
+    mv a0, t0
+    call puts
+
+    call free_slot_file_name
+    mv t2, a1
+    mv t3, a0
+
+    mv a0, t0
+    call strlen
+    mv t4, a0
+    mv a2, a0
+    mv a1, t3
+    mv a0, t0
+    call memcpy
+    add t3, t3, t4
+    li t4, 0x2e
+    sb t4, 0(t3)
+    li t4, 0x62
+    sb t4, 1(t3)
+    li t4, 0x69
+    sb t4, 2(t3)
+    li t4, 0x6e
+    sb t4, 3(t3)
+
+    ld t4, 0(t1)
+    mv s8, t4
+
+    li t0, 0x10
+    mul t0, t0, t2
+    li t5, 0x80100000
+    add s9, t0, t5
+
+    la t0, file_ptr
+    ld t1, 0(t0)
+    mv s7, t1
+    sd s7, 0(s9)
+
+    li t0, LABEL_TABLE_BASE
+    sd zero, 0(t0)
+
+    # PASS 1: обход источника, сбор меток, подсчёт байт
+    mv s1, s8
+    li s3, 0
+    li s5, 0
+
+hex2_p1:
+    lb s2, 0(s1)
+    addi s1, s1, 1
+    beqz s2, hex2_p1_done
+
+    li t0, HASH
+    beq s2, t0, hex2_p1_comment
+    li t0, SEMICOLON
+    beq s2, t0, hex2_p1_comment
+    li t0, 0x3A
+    beq s2, t0, hex2_p1_label
+    li t0, 0x40
+    beq s2, t0, hex2_p1_ref_at
+    li t0, 0x24
+    beq s2, t0, hex2_p1_ref_dollar
+    li t0, 0x25
+    beq s2, t0, hex2_p1_ref_percent
+
+    li t0, (F_LOWERCASE + 1)
+    bge s2, t0, hex2_p1
+    li t0, A_LOWERCASE
+    bge s2, t0, hex2_p1_nib
+    li t0, (F_UPPERCASE + 1)
+    bge s2, t0, hex2_p1
+    li t0, A_UPPERCASE
+    bge s2, t0, hex2_p1_nib
+    li t0, (DIGIT_9 + 1)
+    bge s2, t0, hex2_p1
+    li t0, DIGIT_0
+    bge s2, t0, hex2_p1_nib
+    j hex2_p1
+
+hex2_p1_nib:
+    beqz s3, hex2_p1_flag1
+    addi s5, s5, 1
+    li s3, 0
+    j hex2_p1
+hex2_p1_flag1:
+    li s3, 1
+    j hex2_p1
+
+hex2_p1_comment:
+    lb t0, 0(s1)
+    addi s1, s1, 1
+    beqz t0, hex2_p1_done
+    li t1, NEWLINE
+    bne t0, t1, hex2_p1_comment
+    j hex2_p1
+
+hex2_p1_label:
+    li t0, LABEL_TABLE_BASE
+    ld t1, 0(t0)
+    li t2, 16
+    mul t2, t2, t1
+    addi t2, t2, 8
+    add t2, t0, t2
+    sd s1, 0(t2)
+    sd s5, 8(t2)
+    addi t1, t1, 1
+    sd t1, 0(t0)
+    j hex2_p1_skip
+
+hex2_p1_ref_at:
+    addi s5, s5, 2
+    j hex2_p1_skip
+hex2_p1_ref_dollar:
+    addi s5, s5, 8
+    j hex2_p1_skip
+hex2_p1_ref_percent:
+    addi s5, s5, 4
+hex2_p1_skip:
+    lb t0, 0(s1)
+    beqz t0, hex2_p1_done
+    li t1, NEWLINE
+    beq t0, t1, hex2_p1
+    li t1, 0x0D
+    beq t0, t1, hex2_p1
+    li t1, 0x20
+    beq t0, t1, hex2_p1
+    li t1, 0x09
+    beq t0, t1, hex2_p1
+    addi s1, s1, 1
+    j hex2_p1_skip
+
+hex2_p1_done:
+
+    # PASS 2: генерация байт, подстановка адресов меток
+    mv s1, s8
+    mv s5, s7
+    li s3, 0
+    li s4, 0
+
+hex2_p2:
+    lb s2, 0(s1)
+    addi s1, s1, 1
+    beqz s2, hex2_p2_done
+
+    li t0, HASH
+    beq s2, t0, hex2_p2_comment
+    li t0, SEMICOLON
+    beq s2, t0, hex2_p2_comment
+    li t0, 0x3A
+    beq s2, t0, hex2_p2_skip
+    li t0, 0x40
+    beq s2, t0, hex2_p2_ref_at
+    li t0, 0x24
+    beq s2, t0, hex2_p2_ref_dollar
+    li t0, 0x25
+    beq s2, t0, hex2_p2_ref_percent
+
+    li t0, (F_LOWERCASE + 1)
+    bge s2, t0, hex2_p2
+    li t0, A_LOWERCASE
+    bge s2, t0, hex2_p2_lo
+    li t0, (F_UPPERCASE + 1)
+    bge s2, t0, hex2_p2
+    li t0, A_UPPERCASE
+    bge s2, t0, hex2_p2_hi
+    li t0, (DIGIT_9 + 1)
+    bge s2, t0, hex2_p2
+    li t0, DIGIT_0
+    bge s2, t0, hex2_p2_dig
+    j hex2_p2
+
+hex2_p2_lo:
+    addi s2, s2, -(A_LOWERCASE - 10)
+    j hex2_p2_nibble
+hex2_p2_hi:
+    addi s2, s2, -(A_UPPERCASE - 10)
+    j hex2_p2_nibble
+hex2_p2_dig:
+    addi s2, s2, -(DIGIT_0)
+hex2_p2_nibble:
+    slli s4, s4, 4
+    andi s4, s4, 0xFF
+    add s4, s4, s2
+    beqz s3, hex2_p2_flag2
+    sb s4, 0(s5)
+    addi s5, s5, 1
+    li s3, 0
+    j hex2_p2
+hex2_p2_flag2:
+    li s3, 1
+    j hex2_p2
+
+hex2_p2_comment:
+    lb t0, 0(s1)
+    addi s1, s1, 1
+    beqz t0, hex2_p2_done
+    li t1, NEWLINE
+    bne t0, t1, hex2_p2_comment
+    j hex2_p2
+
+hex2_p2_skip:
+    lb t0, 0(s1)
+    beqz t0, hex2_p2_done
+    li t1, NEWLINE
+    beq t0, t1, hex2_p2
+    li t1, 0x0D
+    beq t0, t1, hex2_p2
+    li t1, 0x20
+    beq t0, t1, hex2_p2
+    li t1, 0x09
+    beq t0, t1, hex2_p2
+    addi s1, s1, 1
+    j hex2_p2_skip
+
+hex2_p2_ref_at:
+    call hex1_lookup
+    sub a0, a0, s5
+    addi a0, a0, -2
+    sb a0, 0(s5)
+    srli t0, a0, 8
+    sb t0, 1(s5)
+    addi s5, s5, 2
+    j hex2_p2
+
+hex2_p2_ref_dollar:
+    call hex1_lookup
+    sb a0, 0(s5)
+    srli t0, a0, 8
+    sb t0, 1(s5)
+    srli t0, a0, 16
+    sb t0, 2(s5)
+    srli t0, a0, 24
+    sb t0, 3(s5)
+    srli t0, a0, 32
+    sb t0, 4(s5)
+    srli t0, a0, 40
+    sb t0, 5(s5)
+    srli t0, a0, 48
+    sb t0, 6(s5)
+    srli t0, a0, 56
+    sb t0, 7(s5)
+    addi s5, s5, 8
+    j hex2_p2
+
+hex2_p2_ref_percent:
+    call hex1_lookup
+    sub a0, a0, s5
+    addi a0, a0, -4
+    sb a0, 0(s5)
+    srli t0, a0, 8
+    sb t0, 1(s5)
+    srli t0, a0, 16
+    sb t0, 2(s5)
+    srli t0, a0, 24
+    sb t0, 3(s5)
+    addi s5, s5, 4
+    j hex2_p2
+
+hex2_p2_done:
+    sub t0, s5, s7
+    sd t0, 8(s9)
+
+    la t0, file_ptr
+    sd s5, 0(t0)
+
+    la a0, sym_newline
+    call puts
+    la a0, hex0_builded
+    call puts
+
+hex2_done:
+    j output_done
+
+
 /*
     Поиск метки в таблице по имени
 
@@ -896,14 +1213,14 @@ strcmp_equal:
     ld t0, 0(sp)
     ld t1, 8(sp)
     ld t2, 16(sp)
-    addi sp, sp, -24
+    addi sp, sp, 24
     ret
 strcmp_not_equal:
     li a0, 1
     ld t0, 0(sp)
     ld t1, 8(sp)
     ld t2, 16(sp)
-    addi sp, sp, -24
+    addi sp, sp, 24
     ret
 
 
@@ -1230,6 +1547,7 @@ ls_cmd:                 .string "ls"
 hex0_cmd:               .string "hex0"
 do_cmd:                 .string "do"
 hex1_cmd:               .string "hex1"
+hex2_cmd:               .string "hex2"
 # ===============================================
 
 # ================= Для ошибок ==================
