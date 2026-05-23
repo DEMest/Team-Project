@@ -1,0 +1,20 @@
+DEFINE li_a7_64 93080004
+DEFINE li_a0_1 13051000
+DEFINE auipc_a1 97050000
+DEFINE addi_a1 9385c501
+DEFINE li_a2_len 1306e000
+DEFINE ecall 73000000
+DEFINE li_a7_93 9308d005
+DEFINE li_a0_0 13050000
+DEFINE msg_str 68656c6c6f2066726f6d204d300a
+
+li_a7_64
+li_a0_1
+auipc_a1
+addi_a1
+li_a2_len
+ecall
+li_a7_93
+li_a0_0
+ecall
+msg_str
