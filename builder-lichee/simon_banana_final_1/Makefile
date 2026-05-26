@@ -1,0 +1,63 @@
+include config.mk
+
+# ВАЖНО:
+# PAYLOAD_SRC = src/simon.S  -> это само ядро Simon, его надо превратить в HEX0 для boot.S.
+# FILES_HEX0 = payload.hex0 -> это файлы для Simon, строки вида:
+#     src имя_файла
+#     HEX0_ТЕЛО...
+# Они ДОЛЖНЫ идти после simon.hex0, иначе SiSH не добавит файлы и ls будет пустой.
+
+INTERMEDIATE_FILES = boot.elf boot.bin simon.elf simon.bin simon.hex0
+WRAPPED_BIN = simon_wrapped.img
+FILES_HEX0 ?= payload.hex0
+
+all: $(FINAL_FLASH_IMG)
+	@$(MAKE) --no-print-directory clean_tmp
+
+$(YOUR_RAW_BIN): $(BOOT_SRC) $(PAYLOAD_SRC) $(FILES_HEX0)
+	$(CC) -march=rv64gc -mabi=lp64d -nostdlib -ffreestanding -Ttext=$(DDR_ADDR) $(BOOT_SRC) -o boot.elf
+	$(OBJCOPY) -O binary boot.elf boot.bin
+	$(CC) -march=rv64gc -mabi=lp64d -nostdlib -ffreestanding -Ttext=$(DDR_ADDR) $(PAYLOAD_SRC) -o simon.elf
+	$(OBJCOPY) -O binary simon.elf simon.bin
+	chmod +x ./bin-to-hex0.sh
+	./bin-to-hex0.sh simon.bin simon.hex0
+	# КРИТИЧНО: stage1 читает hex0 до первого NUL.
+	# Если NUL не вставить, он сожрёт payload.hex0 как часть ядра,
+	# и script_ptr будет указывать уже после файлов -> ls пустой.
+	printf '\\0' >> simon.hex0
+	@echo "Склеиваем: boot.bin + simon.hex0 + NUL + $(FILES_HEX0)"
+	cat boot.bin simon.hex0 $(FILES_HEX0) > $@
+	@echo "script/files block теперь начинается сразу после NUL; ls должен увидеть файлы из $(FILES_HEX0)"
+
+$(WRAPPED_BIN): $(YOUR_RAW_BIN)
+	$(MKIMAGE) -A riscv -O u-boot -T standalone -C none \
+		-a $(DDR_ADDR) -e $(DDR_ADDR) -n "SimonOS-Lichee" \
+		-d $(YOUR_RAW_BIN) $@
+
+$(FINAL_FLASH_IMG): $(WRAPPED_BIN)
+	@test -f "$(SPL_BIN)" || (echo "Нет $(SPL_BIN). Положи рядом u-boot-with-spl.bin из builder-lichee"; exit 1)
+	@echo "Собираем образ для SD-карты..."
+	dd if=/dev/zero of=$@ bs=1M count=4
+	dd if=$(SPL_BIN) of=$@ conv=notrunc
+	dd if=$(WRAPPED_BIN) of=$@ bs=1k seek=1024 conv=notrunc
+	@echo "ГОТОВО: $(FINAL_FLASH_IMG)"
+	@echo "Шить примерно так: sudo dd if=$(FINAL_FLASH_IMG) of=/dev/sdX bs=4M status=progress conv=fsync"
+
+qemu:
+	$(MAKE) clean_tmp
+	$(CC) -DQEMU -march=rv64gc -mabi=lp64d -nostdlib -ffreestanding -Ttext=0x80000000 $(BOOT_SRC) -o boot.elf
+	$(OBJCOPY) -O binary boot.elf boot.bin
+	$(CC) -DQEMU -march=rv64gc -mabi=lp64d -nostdlib -ffreestanding -Ttext=0x80000000 $(PAYLOAD_SRC) -o simon.elf
+	$(OBJCOPY) -O binary simon.elf simon.bin
+	./bin-to-hex0.sh simon.bin simon.hex0
+	printf '\\0' >> simon.hex0
+	cat boot.bin simon.hex0 $(FILES_HEX0) > image_qemu.bin
+	qemu-system-riscv64 -M virt -bios image_qemu.bin -monitor stdio
+
+clean_tmp:
+	@rm -f $(INTERMEDIATE_FILES) $(YOUR_RAW_BIN) $(WRAPPED_BIN)
+
+clean:
+	rm -f $(INTERMEDIATE_FILES) $(WRAPPED_BIN) $(YOUR_RAW_BIN) $(FINAL_FLASH_IMG) image_qemu.bin
+
+.PHONY: all clean clean_tmp qemu

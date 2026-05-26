@@ -1,0 +1,9 @@
+BOARD_NAME := qemu_virt
+BOARD_HEADER := boards/qemu_virt.h
+DDR_ADDR := 0x80000000
+YOUR_RAW_BIN := image_qemu.bin
+FULLFLASH_BIN :=
+WRAPPED_BIN :=
+UBOOT_SPL_BIN ?=
+UBOOT_IMAGE_NAME := SimonOS-QEMU
+SUPPORTS_FULLFLASH := 0

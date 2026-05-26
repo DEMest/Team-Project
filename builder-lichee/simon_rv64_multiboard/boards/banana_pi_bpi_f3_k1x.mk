@@ -1,0 +1,9 @@
+BOARD_NAME := banana_pi_bpi_f3_k1x
+BOARD_HEADER := boards/banana_pi_bpi_f3_k1x.h
+DDR_ADDR := 0x10000000
+YOUR_RAW_BIN := image_simon_work.bin
+FULLFLASH_BIN :=
+WRAPPED_BIN :=
+UBOOT_SPL_BIN ?=
+UBOOT_IMAGE_NAME := SimonOS-Banana-K1X
+SUPPORTS_FULLFLASH := 0

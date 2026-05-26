@@ -1,0 +1,701 @@
+# :_start ; (0x0600078)
+
+    03 36 01 01     # rd_a2 rs1_sp !16 ld               ; Input file name
+
+    ; Initialize globals
+    13 0A F0 FF     # rd_s4 !-1 addi                    ; Toggle
+    93 0A 00 00     # rd_s5 addi                        ; Hold
+    13 0B 00 00     # rd_s6 addi                        ; Instruction Pointer
+
+    ; Open input file and store FD in s2
+    93 08 80 03     # rd_a7 !56 addi                    ; sys_openat
+    13 05 C0 F9     # rd_a0 !-100 addi                  ; AT_FDCWD
+    93 05 06 00     # rd_a1 rs1_a2 mv                   ; file name
+    13 06 00 00     # rd_a2 addi                        ; read only
+    73 00 00 00     # ecall                             ; syscall
+    63 4C 05 40     # rs1_a0 @Fail bltz                 ; Error opening file
+                    # +1048
+    13 09 05 00     # rd_s2 rs1_a0 mv                   ; Save fd in for later
+
+    ; Set default FD for output file to stdout
+    93 09 10 00     # rd_s3 !1 addi
+
+    ; If we only have 2 arguments, don't use the third (it's not set)
+    93 02 20 00     # rd_t0 !2 addi
+    03 35 01 00     # rd_a0 rs1_sp ld                   ; Get number of the args
+    63 42 55 40     # rs1_a0 rs2_t0 @Fail blt           ; No input file provided
+                    # +1028B
+    63 00 55 02     # rs1_a0 rs2_t0 @after_open beq     ; No output file provided. Use stdout
+                    # +32B
+
+    ; Open output file and store the FD in s3
+    93 08 80 03     # rd_a7 !56 addi                    ; sys_openat
+    13 05 C0 F9     # rd_a0 !-100 addi                  ; AT_FDCWD
+    83 35 81 01     # rd_a1 rs1_sp !24 ld               ; Output file (argument 3)
+    13 06 10 24     # rd_a2 !00001101 addi              ; decimal 577
+    ; O_TRUNC   00001000
+    ; O_CREAT   00000100
+    ; O_WRONLY  00000001
+    ; OCTAL!
+    93 06 00 1C     # rd_a3 !00700 addi                 ; Set read, write, execute permission on user
+    ; S_IRWXU  00700
+    ; OCTAL!
+    73 00 00 00     # ecall                             ; syscall
+    93 09 05 00     # rd_s3 rs1_a0 mv                   ; Save fd in for later
+
+# :after_open ; (0x06000D4)
+    EF 00 40 03     # rd_ra $First_pass jal             ; First pass
+                    # +52B
+
+    ; Rewind input file
+    93 08 E0 03     # rd_a7 !62 addi                    ; sys_lseek
+    13 05 09 00     # rd_a0 rs1_s2 mv                   ; Input file descriptor
+    93 05 00 00     # rd_a1 mv                          ; Set offset to zero
+    13 06 00 00     # rd_a2 mv                          ; Set whence to zero
+    73 00 00 00     # ecall                             ; syscall
+
+    ; Initialize globals
+    13 0A F0 FF     # rd_s4 !-1 addi                    ; Toggle
+    93 0A 00 00     # rd_s5 addi                        ; Hold
+    13 0B 00 00     # rd_s6 addi                        ; Instruction Pointer
+    93 0B 00 00     # rd_s7 addi                        ; tempword
+    13 0C 00 00     # rd_s8 addi                        ; Shift register
+
+    EF 00 00 07     # rd_ra $Second_pass jal            ; Now do the second pass
+                    # +112B
+
+    6F 00 40 3A     # $Done jal                         ; We are done
+                    # +392B
+
+; First pass loop to determine addresses of labels
+# :First_pass ; (0x0600108)
+    13 01 81 FF     # rd_sp rs1_sp !-8 addi             ; Allocate stack
+    23 30 11 00     # rs1_sp rs2_ra sd                  ; protect ra
+
+# :First_pass_loop ; (0x0600110)
+    EF 00 C0 2D     # rd_ra $Read_byte jal              ; Get another byte
+                    # +732B
+
+    ; Deal with EOF
+    13 03 C0 FF     # rd_t1 !-4 addi
+    63 06 65 04     # rs1_a0 rs2_t1 @First_pass_done beq
+                    # +76B
+
+    ; Check for :
+    13 03 A0 03     # rd_t1 !0x3a addi
+    63 14 65 00     # rs1_a0 rs2_t1 @First_pass_0 bne
+                    # +8B
+    EF 00 C0 32     # rd_ra $StoreLabel jal             ; Store this label
+                    # +812B
+
+# :First_pass_0 ; (0x0600128)
+    ; Check for !
+    13 03 10 02     # rd_t1 !0x21 addi
+    63 08 65 02     # rs1_a0 rs2_t1 @Throwaway_token beq
+                    # +48B
+
+    ; Check for @
+    13 03 00 04     # rd_t1 !0x40 addi
+    63 04 65 02     # rs1_a0 rs2_t1 @Throwaway_token beq
+                    # +40B
+
+    ; Check for $
+    13 03 40 02     # rd_t1 !0x24 addi
+    63 00 65 02     # rs1_a0 rs2_t1 @Throwaway_token beq
+                    # +32B
+
+    ; Check for ~
+    13 03 E0 07     # rd_t1 !0x7e addi
+    63 0C 65 00     # rs1_a0 rs2_t1 @Throwaway_token beq
+                    # +24B
+
+    93 05 F0 FF     # rd_a1 !-1 addi                    ; write = false
+    EF 00 C0 19     # rd_ra $DoByte jal                 ; Deal with everything else
+                    # +412B
+
+    13 03 C0 FF     # rd_t1 !-4 addi                    ; Deal with EOF
+    63 08 65 00     # rs1_a0 rs2_t1 @First_pass_done beq
+                    # +16B
+
+    6F F0 9F FB     # $First_pass_loop jal              ; Keep looping
+                    # -72B
+
+# :Throwaway_token ; (0x060015C)
+    ; Deal with Pointer to label
+    EF 00 00 29     # rd_ra $Read_byte jal              ; Drop the char
+                    # +656B
+    6F F0 1F FB     # $First_pass_loop jal              ; Loop again
+                    # -80B
+
+# :First_pass_done ; (0x0600164)
+    83 30 01 00     # rd_ra rs1_sp ld                   ; restore ra
+    13 01 81 00     # rd_sp rs1_sp !8 addi              ; deallocate stack
+    67 80 00 00     # rs1_ra jalr                       ; return
+
+# :Second_pass ; (0x0600170)
+    13 01 81 FF     # rd_sp rs1_sp !-8 addi             ; Allocate stack
+    23 30 11 00     # rs1_sp rs2_ra sd                  ; protect ra
+
+# :Second_pass_loop ; (0x0600178)
+    EF 00 40 27     # rd_ra $Read_byte jal              ; Read another byte
+                    # +628B
+
+    ; Deal with EOF
+    13 03 C0 FF     # rd_t1 !-4 addi                    ; Deal with EOF
+    63 0E 65 14     # rs1_a0 rs2_t1 @Second_pass_done beq
+                    # +348B
+
+    ; Drop the label
+    13 03 A0 03     # rd_t1 !0x3a addi
+    63 16 65 00     # rs1_a0 rs2_t1 @Second_pass_0 bne
+                    # +12B
+
+    EF 00 00 26     # rd_ra $Read_byte jal              ; Read the label
+                    # +608B
+    6F F0 9F FE     # $Second_pass_loop jal             ; Continue looping
+                    # -24B
+
+# :Second_pass_0 ; (0x0600194)
+    ; Check for !
+    13 03 10 02     # rd_t1 !0x21 addi
+    63 08 65 02     # rs1_a0 rs2_t1 @UpdateShiftRegister beq
+                    # +48B
+
+    ; Check for @
+    13 03 00 04     # rd_t1 !0x40 addi
+    63 04 65 02     # rs1_a0 rs2_t1 @UpdateShiftRegister beq
+                    # +40B
+
+    ; Check for $
+    13 03 40 02     # rd_t1 !0x24 addi
+    63 00 65 02     # rs1_a0 rs2_t1 @UpdateShiftRegister beq
+                    # +32B
+
+    ; Check for ~
+    13 03 E0 07     # rd_t1 !0x7e addi
+    63 0C 65 00     # rs1_a0 rs2_t1 @UpdateShiftRegister beq
+                    # +24B
+
+    ; Deal with everything else
+    93 05 00 00     # rd_a1 mv                          ; write = true
+    EF 00 00 13     # rd_ra $DoByte jal                 ; Process our char
+                    # +304B
+
+    # Deal with EOF
+    13 03 C0 FF     # rd_t1 !-4 addi
+    63 0E 65 10     # rs1_a0 rs2_t1 @Second_pass_done beq ; We are done
+                    # +284B
+
+    6F F0 5F FB     # $Second_pass_loop jal             ; continue looping
+                    # -76B
+
+# :UpdateShiftRegister ; (0x06001C8)
+    93 05 05 00     # rd_a1 rs1_a0 mv                   ; Store label prefix
+    EF 00 C0 25     # rd_ra $Get_table_target jal       ; Get target
+                    # +604B
+    03 35 05 00     # rd_a0 rs1_a0 ld                   ; Dereference pointer
+    33 05 65 41     # rd_a0 rs1_a0 rs2_s6 sub           ; target - ip
+
+    ; Check for !
+    13 03 10 02     # rd_t1 !0x21 addi
+    63 80 65 02     # rs1_a1 rs2_t1 @UpdateShiftRegister_I beq
+                    # +32B
+
+    ; Check for @
+    13 03 00 04     # rd_t1 !0x40 addi
+    63 8A 65 02     # rs1_a1 rs2_t1 @UpdateShiftRegister_B beq
+                    # +52B
+
+    ; Check for $
+    13 03 40 02     # rd_t1 !0x24 addi
+    63 8A 65 06     # rs1_a1 rs2_t1 @UpdateShiftRegister_J beq
+                    # +116B
+
+    ; Check for ~
+    13 03 E0 07     # rd_t1 !0x7e addi
+    63 88 65 0A     # rs1_a1 rs2_t1 @UpdateShiftRegister_U beq
+                    # +176B
+
+    6F F0 1F F8     # $Second_pass_loop jal             ; continue looping
+                    # -128B
+
+# :UpdateShiftRegister_I ; (0x06001FC)
+    ; Corresponds to RISC-V I format
+    13 05 45 00     # rd_a0 rs1_a0 !4 addi              ; add 4 due to this being 2nd part of auipc combo
+
+    37 13 00 00     # rd_t1 ~0xfff lui                  ; load higher bits
+    1B 03 F3 FF     # rd_t1 rs1_t1 !0xfff addiw
+    33 73 65 00     # rd_t1 rs1_a0 rs2_t1 and           ; (value & 0xfff)
+    93 1B 43 01     # rd_s7 rs1_t1 rs2_x20 slli         ; tempword = (value & 0xfff) << 20
+    33 4C 7C 01     # rd_s8 rs1_s8 rs2_s7 xor           ; shiftregister = shiftregister ^ tempword
+
+    6F F0 5F F6     # $Second_pass_loop jal             ; continue looping
+                    # -156B
+
+# :UpdateShiftRegister_B ; (0x0600218)
+    ; Corresponds to RISC-V B format
+
+    ; tempword = ((value & 0x1e) << 7)            ; imm[4:1]
+    ;          | ((value & 0x7e0) << (31 - 11))   ; imm[10:5]
+    ;          | ((value & 0x800) >> 4)           ; imm[11]
+    ;          | ((value & 0x1000) << (31 - 12))  ; imm[12]
+
+    13 03 E0 01     # rd_t1 !0x1e addi
+    33 73 65 00     # rd_t1 rs1_a0 rs2_t1 and           ; value & 0x1e
+    93 12 73 00     # rd_t0 rs1_t1 rs2_x7 slli          ; tempword = (value & 0x1e) << 7
+
+    13 03 00 7E     # rd_t1 !0x7e0 addi
+    33 73 65 00     # rd_t1 rs1_a0 rs2_t1 and           ; value & 0x7e0
+    13 13 43 01     # rd_t1 rs1_t1 rs2_x20 slli         ; (value & 0x7e0) << (31 - 11)
+    B3 E2 62 00     # rd_t0 rs1_t0 rs2_t1 or            ; logical or with the previous expression
+
+    37 13 00 00     # rd_t1 ~0x800 lui                  ; load higher bits
+    1B 03 03 80     # rd_t1 rs1_t1 !0x800 addiw
+    33 73 65 00     # rd_t1 rs1_a0 rs2_t1 and           ; value & 0x800
+    13 53 43 00     # rd_t1 rs1_t1 rs2_x4 srli          ; (value & 0x800) >> 4
+    B3 E2 62 00     # rd_t0 rs1_t0 rs2_t1 or            ; logical or with the previous expression
+
+    37 13 00 00     # rd_t1 ~0x1000 lui                 ; load higher bits
+    33 73 65 00     # rd_t1 rs1_a0 rs2_t1 and           ; value & 0x1000
+    13 13 33 01     # rd_t1 rs1_t1 rs2_x19 slli         ; (value & 0x1000) << (31 - 12)
+    B3 EB 62 00     # rd_s7 rs1_t0 rs2_t1 or            ; logical or with the previous expression
+
+    33 4C 7C 01     # rd_s8 rs1_s8 rs2_s7 xor           ; shiftregister = shiftregister ^ tempword
+
+    6F F0 DF F1     # $Second_pass_loop jal             ; continue looping
+                    # -228B
+
+# :UpdateShiftRegister_J ; (0x0600260)
+    ; Corresponds to RISC-V J format
+
+    ; tempword = ((value & 0x7fe) << (30 - 10))    ; imm[10:1]
+    ;          | ((value & 0x800) << (20 - 11))    ; imm[11]
+    ;          | ((value & 0xff000))               ; imm[19:12]
+    ;          | ((value & 0x100000) << (31 - 20)) ; imm[20]
+
+    13 03 E0 7F     # rd_t1 !0x7fe addi
+    33 73 65 00     # rd_t1 rs1_a0 rs2_t1 and           ; value & 0x7fe
+    93 12 43 01     # rd_t0 rs1_t1 rs2_x20 slli         ; tempword = (value & 0x7fe) << 20
+
+    37 13 00 00     # rd_t1 ~0x800 lui                  ; load higher bits
+    1B 03 03 80     # rd_t1 rs1_t1 !0x800 addiw
+    33 73 65 00     # rd_t1 rs1_a0 rs2_t1 and           ; value & 0x800
+    13 13 93 00     # rd_t1 rs1_t1 rs2_x9 slli          ; (value & 0x800) << (20 - 11)
+    B3 E2 62 00     # rd_t0 rs1_t0 rs2_t1 or            ; logical or with the previous expression
+
+    37 F3 0F 00     # rd_t1 ~0xff000 lui                ; load higher bits
+    33 73 65 00     # rd_t1 rs1_a0 rs2_t1 and           ; value & 0xff000
+    B3 E2 62 00     # rd_t0 rs1_t0 rs2_t1 or            ; logical or with the previous expression
+
+    37 03 10 00     # rd_t1 ~0x100000 lui               ; load higher bits
+    33 73 65 00     # rd_t1 rs1_a0 rs2_t1 and           ; value & 0x100000
+    13 13 B3 00     # rd_t1 rs1_t1 rs2_x11 slli         ; (value & 0x100000) << (31 - 20)
+    B3 EB 62 00     # rd_s7 rs1_t0 rs2_t1 or            ; logical or with the previous expression
+
+    33 4C 7C 01     # rd_s8 rs1_s8 rs2_s7 xor           ; shiftregister = shiftregister ^ tempword
+
+    6F F0 9F ED     # $Second_pass_loop jal             ; continue looping
+                    # -296B
+
+# :UpdateShiftRegister_U ; (0x06002A4)
+    ; Corresponds to RISC-V U format
+    ; if value is 0x800 or more we have to add 11-th bit (0x1000) to compensate for signed extension
+
+    B7 12 00 00     # rd_t0 ~0x800 lui                  ; load higher bits
+    9B 82 02 80     # rd_t0 rs1_t0 !0x800 addiw
+    37 13 00 00     # rd_t1 ~0xfff lui                  ; load higher bits
+    1B 03 F3 FF     # rd_t1 rs1_t1 !0xfff addiw
+
+    ; We are outside 31-bit that ~ can normally load
+    B7 03 10 00     # rd_t2 ~0x100000 lui               ; load 0xfffff000
+    9B 83 F3 FF     # rd_t2 rs1_t2 !-1 addiw            ; load 0xfffff000
+    93 93 C3 00     # rd_t2 rs1_t2 rs2_x12 slli         ; load 0xfffff000
+    33 73 65 00     # rd_t1 rs1_a0 rs2_t1 and           ; value & 0xfff
+    B3 7B 75 00     # rd_s7 rs1_a0 rs2_t2 and           ; value & 0xfffff000
+    63 46 53 00     # rs1_t1 rs2_t0 @UpdateShiftRegister_U_small blt
+                    # +12B
+
+    # Deal with sign extension: add 0x1000
+    B7 12 00 00     # rd_t0 ~0x1000 lui                 ; load higher bits
+    BB 8B 72 01     # rd_s7 rs1_t0 rs2_s7 addw          ; (value & 0xfffff000) + 0x1000
+
+# :UpdateShiftRegister_U_small ; (0x06002D4)
+    33 4C 7C 01     # rd_s8 rs1_s8 rs2_s7 xor           ; shiftregister = shiftregister ^ tempword
+
+    6F F0 1F EA     # $Second_pass_loop jal             ; continue looping
+                    # -352B
+
+# :Second_pass_done ; (0x06002DC)
+    83 30 01 00     # rd_ra rs1_sp ld                   ; restore ra
+    13 01 81 00     # rd_sp rs1_sp !8 addi              ; deallocate stack
+    67 80 00 00     # rs1_ra jalr                       ; return
+
+
+; DoByte function
+; Receives:
+;   character in a0
+;   bool write in a1
+; Does not return anything
+# :DoByte ; (0x06002E8)
+    13 01 81 FF     # rd_sp rs1_sp !-8 addi             ; Allocate stack
+    23 30 11 00     # rs1_sp rs2_ra sd                  ; protect ra
+
+    EF 00 00 05     # rd_ra $hex jal                    ; Process hex, store it in a6
+                    # +80B
+
+    63 40 08 04     # rs1_a6 @DoByte_Done bltz          ; Deal with EOF and unrecognized characters
+                    # +64B
+
+    63 1A 0A 02     # rs1_s4 @DoByte_NotToggle bnez     ; Check if toggle is set
+                    # +56B
+
+    ; toggle = true
+    63 92 05 02     # rs1_a1 @DoByte_1 bnez             ; check if we have to write
+                    # +36B
+
+    ; write = true
+    ; We calculate (hold * 16) + hex(c) ^ sr_nextb()
+    ; First, calculate new shiftregister
+    93 02 F0 0F     # rd_t0 !0xff addi
+    B3 72 5C 00     # rd_t0 rs1_s8 rs2_t0 and           ; sr_nextb = shiftregister & 0xff
+    13 5C 8C 00     # rd_s8 rs1_s8 rs2_x8 srli          ; shiftregister >> 8
+
+    B3 C2 02 01     # rd_t0 rs1_t0 rs2_a6 xor           ; hex(c) ^ sr_nextb
+    13 93 4A 00     # rd_t1 rs1_s5 rs2_x4 slli          ; hold << 4
+    33 85 62 00     # rd_a0 rs1_t0 rs2_t1 add           ; (hold << 4) + hex(c) ^ sr_nextb()
+    EF 00 40 15     # rd_ra $fputc jal                  ; print it
+                    # +340B
+    63 0C 05 18     # rs1_a0 @Fail beqz                 ; Fail if nothing was written
+                    # +408B
+
+# :DoByte_1 ; (0x0600320)
+    13 0B 1B 00     # rd_s6 rs1_s6 !1 addi              ; Increment IP
+    93 0A 00 00     # rd_s5 mv                          ; hold = 0
+    6F 00 80 00     # $DoByte_FlipToggle jal            ; return
+                    # +8B
+
+# :DoByte_NotToggle ; (0x060032C)
+    93 0A 08 00     # rd_s5 rs1_a6 mv                   ; hold = hex(c)
+
+# :DoByte_FlipToggle ; (0x0600330)
+    13 4A FA FF     # rd_s4 rs1_s4 not                  ; Flip the toggle
+
+# :DoByte_Done ; (0x0600334)
+    83 30 01 00     # rd_ra rs1_sp ld                   ; restore ra
+    13 01 81 00     # rd_sp rs1_sp !8 addi              ; deallocate stack
+    67 80 00 00     # rs1_ra jalr                       ; return
+
+; Convert ASCII hex characters into binary representation, e.g. 'a' -> 0xA
+; Receives:
+;   character in a0
+; Returns:
+;   a6 with character's hex value.
+# :hex ; (0x0600340)
+    13 01 01 FF     # rd_sp rs1_sp !-16 addi            ; Allocate stack
+    23 30 11 00     # rs1_sp rs2_ra sd                  ; protect ra
+    23 34 B1 00     # rs1_sp rs2_a1 @8 sd               ; protect a1
+
+    ; Deal with EOF
+    13 03 C0 FF     # rd_t1 !-4 addi
+    63 06 65 08     # rs1_a0 rs2_t1 @hex_return beq
+                    # +140B
+
+    ; deal with line comments starting with #
+    13 03 30 02     # rd_t1 !0x23 addi
+    63 06 65 06     # rs1_a0 rs2_t1 @ascii_comment beq ; a0 eq to '#'
+                    # +108B
+
+    ; deal with line comments starting with ;
+    13 03 B0 03     # rd_t1 !0x3b addi
+    63 02 65 06     # rs1_a0 rs2_t1 @ascii_comment beq  ; a0 eq to ';'
+                    # +100B
+
+    ; deal all ascii less than 0
+    13 03 00 03     # rd_t1 !0x30 addi
+    63 4A 65 04     # rs1_a0 rs2_t1 @ascii_other blt
+                    # +84B
+
+    ; deal with 0-9
+    13 03 A0 03     # rd_t1 !0x3a addi
+    63 44 65 02     # rs1_a0 rs2_t1 @ascii_num blt
+                    # +40B
+
+    ; deal with all ascii less than A
+    13 03 10 04     # rd_t1 !0x41 addi
+    63 42 65 04     # rs1_a0 rs2_t1 @ascii_other blt
+                    # +68B
+
+    ; deal with A-F
+    13 03 70 04     # rd_t1 !0x47 addi
+    63 48 65 02     # rs1_a0 rs2_t1 @ascii_high blt
+                    # +48B
+
+    ; deal with all ascii less than a
+    13 03 10 06     # rd_t1 !0x61 addi
+    63 4A 65 02     # rs1_a0 rs2_t1 @ascii_other blt
+                    # +52B
+
+    ; deal with a-f
+    13 03 70 06     # rd_t1 !0x67 addi
+    63 4A 65 00     # rs1_a0 rs2_t1 @ascii_low blt
+                    # +20B
+
+    ; The rest that remains needs to be ignored
+    6F 00 80 02     # $ascii_other jal
+                    # +40B
+
+# :ascii_num ; (0x0600398)
+    13 03 00 03     # rd_t1 !0x30 addi                  ; '0' -> 0
+    33 08 65 40     # rd_a6 rs1_a0 rs2_t1 sub
+    6F 00 C0 03     # $hex_return jal                   ; return
+                    # +60B
+# :ascii_low ; (0x06003A4)
+    13 03 70 05     # rd_t1 !0x57 addi                  ; 'a' -> 0xA
+    33 08 65 40     # rd_a6 rs1_a0 rs2_t1 sub
+    6F 00 00 03     # $hex_return jal                   ; return
+                    # +48B
+# :ascii_high ; (0x06003B0)
+    13 03 70 03     # rd_t1 !0x37 addi                  ; 'A' -> 0xA
+    33 08 65 40     # rd_a6 rs1_a0 rs2_t1 sub
+    6F 00 40 02 # $hex_return jal                       ; return
+                    # +36B
+# :ascii_other ; (0x06003BC)
+    13 08 F0 FF     # rd_a6 !-1 addi                    ; Return -1
+    6F 00 C0 01     # $hex_return jal                   ; return
+                    # +28B
+# :ascii_comment ; (0x06003C4)                          ; Read the comment until newline
+    EF 00 80 02     # rd_ra $Read_byte jal
+                    # +40B
+    13 03 D0 00     # rd_t1 !0xd addi                   ; CR
+    63 06 65 00     # rs1_a0 rs2_t1 @ascii_comment_cr beq
+                    # +12B
+    13 03 A0 00     # rd_t1 !0xa addi                   ; LF
+    E3 18 65 FE     # rs1_a0 rs2_t1 @ascii_comment bne  ; Keep reading comment
+                    # -16B
+# :ascii_comment_cr ; (0x06003D8)
+    13 08 F0 FF     # rd_a6 !-1 addi                    ; Return -1
+# :hex_return ; (0x06003DC)
+    83 30 01 00     # rd_ra rs1_sp ld                   ; restore ra
+    83 35 81 00     # rd_a1 rs1_sp !8 ld                ; restore a1
+    13 01 01 01     # rd_sp rs1_sp !16 addi             ; Deallocate stack
+    67 80 00 00     # rs1_ra jalr                       ; return
+
+; Read byte into a0
+# :Read_byte ; (0x06003EC)
+    13 01 01 FF     # rd_sp rs1_sp !-16 addi            ; Allocate stack
+    23 34 B1 00     # rs1_sp rs2_a1 @8 sd               ; protect a1
+
+    93 08 F0 03     # rd_a7 !63 addi                    ; sys_read
+    13 05 09 00     # rd_a0 rs1_s2 mv                   ; File descriptor
+    93 05 01 00     # rd_a1 rs1_sp mv                   ; Get stack address for buffer
+    13 00 00 00     # nop                               ; no-op
+    13 06 10 00     # rd_a2 !1 addi                     ; Size of what we want to read
+    73 00 00 00     # ecall                             ; syscall
+
+    63 06 05 00     # rs1_a0 @Read_byte_1 beqz          ; Deal with EOF
+                    # +12B
+    03 85 05 00     # rd_a0 rs1_a1 lb                   ; Dereference pointer
+
+    6F 00 80 00     # $Read_byte_done jal               ; return
+                    # +8B
+
+# :Read_byte_1 ; (0x0600418)
+    13 05 C0 FF     # rd_a0 !-4 addi                    ; Put EOF in a0
+# :Read_byte_done ; (0x060041C)
+    83 35 81 00     # rd_a1 rs1_sp !8 ld                ; restore a1
+    13 01 01 01     # rd_sp rs1_sp !16 addi             ; Deallocate stack
+    67 80 00 00     # rs1_ra jalr                       ; return
+
+; Reads a byte and calculates table address
+; Returns a pointer in a0
+# :Get_table_target ; (0x0600428)
+    13 01 81 FF     # rd_sp rs1_sp !-8 addi             ; Allocate stack
+    23 30 11 00     # rs1_sp rs2_ra sd                  ; protect ra
+
+    EF F0 DF FB     # rd_ra $Read_byte jal              ; Get single char label
+                    # -68B
+    13 15 35 00     # rd_a0 rs1_a0 rs2_x3 slli          ; Each label in table takes 8 bytes to store
+    97 02 00 00     # rd_t0 ~table auipc                ; Load address of table
+    93 82 82 08     # rd_t0 rs1_t0 !table addi          ; into register t0
+                    # +136B
+    33 05 55 00     # rd_a0 rs1_a0 rs2_t0 add           ; Calculate offset
+
+    83 30 01 00     # rd_ra rs1_sp ld                   ; restore ra
+    13 01 81 00     # rd_sp rs1_sp !8 addi              ; deallocate stack
+    67 80 00 00     # rs1_ra jalr                       ; return
+
+# :StoreLabel ; (0x0600450)
+    13 01 81 FF     # rd_sp rs1_sp !-8 addi             ; Allocate stack
+    23 30 11 00     # rs1_sp rs2_ra sd                  ; protect ra
+
+    EF F0 1F FD     # rd_ra $Get_table_target jal
+                    # -48B
+    23 30 65 01     # rs1_a0 rs2_s6 sd                  ; Store ip into table target
+
+    83 30 01 00     # rd_ra rs1_sp ld                   ; restore ra
+    13 01 81 00     # rd_sp rs1_sp !8 addi              ; deallocate stack
+    67 80 00 00     # rs1_ra jalr                       ; return
+
+; fputc function
+; Receives CHAR in a0
+; Writes and returns number of bytes written in a0
+# :fputc ; (0x060046C)
+    13 01 01 FE     # rd_sp rs1_sp !-32 addi            ; allocate stack
+    23 30 A1 00     # rs1_sp rs2_a0 sd                  ; protect a0
+    23 34 11 00     # rs1_sp rs2_ra @8 sd               ; protect ra
+    23 38 B1 00     # rs1_sp rs2_a1 @16 sd              ; protect a1
+    23 3C C1 00     # rs1_sp rs2_a2 @24 sd              ; protect a2
+
+    93 08 00 04     # rd_a7 !64 addi                    ; sys_write
+    13 85 09 00     # rd_a0 rs1_s3 mv                   ; write to output
+    93 05 01 00     # rd_a1 rs1_sp mv                   ; Get stack address
+    13 06 10 00     # rd_a2 !1 addi                     ; write 1 character
+    73 00 00 00     # ecall                             ; syscall
+
+    83 30 81 00     # rd_ra rs1_sp !8 ld                ; restore ra
+    83 35 01 01     # rd_a1 rs1_sp !16 ld               ; restore a1
+    03 36 81 01     # rd_a2 rs1_sp !24 ld               ; restore a2
+    13 01 01 02     # rd_sp rs1_sp !32 addi             ; Deallocate stack
+    67 80 00 00     # rs1_ra jalr                       ; return
+
+# :Done ; (0x06004A8)
+    ; Terminate program with 0 return code
+    93 08 D0 05     # rd_a7 !93 addi                    ; sys_exit
+    13 05 00 00     # rd_a0 mv                          ; Return code 0
+    73 00 00 00     # ecall                             ; exit(0)
+# :Fail ; (0x06004B4)
+    ; Terminate program with 1 return code
+    93 08 D0 05     # rd_a7 !93 addi                    ; sys_exit
+    13 05 10 00     # rd_a0 !1 addi                     ; Return code 1
+    73 00 00 00     # ecall                             ; exit(1)
+# PROGRAM END
+
+# :table; (0x06004C0)
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+    00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00

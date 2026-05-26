@@ -1,0 +1,11 @@
+# Настройки сборки под Lichee Pi 4A
+DDR_ADDR = 0x40000000
+BOOT_SRC = src/boot.S
+PAYLOAD_SRC = src/simon.S
+YOUR_RAW_BIN = image_payload_lichee.bin
+SPL_BIN = u-boot-with-spl.bin
+FINAL_FLASH_IMG = flash_me.bin
+CROSS_COMPILE = riscv64-unknown-elf-
+CC = $(CROSS_COMPILE)gcc
+OBJCOPY = $(CROSS_COMPILE)objcopy
+MKIMAGE = mkimage
